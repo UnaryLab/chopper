@@ -1,0 +1,4 @@
+[project]
+name = "chopper"
+version = "0.01"
+dependencies = ["pandas", "numpy", "matplotlib", "mypy"]
