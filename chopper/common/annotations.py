@@ -7,7 +7,7 @@ class Framework(enum.Enum):
     FSDPv2 = enum.auto()
 
 
-def no_overlap_mask(df: DataFrame, framework: Framework = Framework.FSDPv1) -> Series[bool]:
+def no_overlap_mask(df: DataFrame, framework: Framework = Framework.FSDPv1) -> Series:
     nccl_mask = df["name"].str.startswith("ncclDevKernel")
     match framework:
         case Framework.FSDPv1:
