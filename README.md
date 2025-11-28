@@ -9,6 +9,14 @@ To install chopper run:
 pip install .
 ```
 
+## Visualization
+
+To select and view plots run:
+
+```
+python -m chopper.window
+```
+
 ## Tests
 
 To type check with `mypy` run:
