@@ -10,6 +10,9 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QLabel,
     QCheckBox,
+    QMenu,
+    QScrollArea,
+    QFrame,
 )
 from PyQt6.QtCore import Qt
 
@@ -26,11 +29,30 @@ import pkgutil
 from typing import Tuple
 
 
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox
+class PlotSelection(QWidget):
+    def __init__(self, vals, parent=None):
+        self.parent = parent
+        super().__init__(parent)
+        label = QLabel('available plots')
 
+        self.list = QListWidget()
 
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QListWidget, QListWidgetItem, QMenu
-from PyQt6.QtCore import Qt
+        for val in vals:
+            item = QListWidgetItem(val)
+            self.list.addItem(item)
+
+        self.list.itemSelectionChanged.connect(self.on_selection_changed)
+
+        layout = QVBoxLayout()
+        layout.addWidget(label)
+        layout.addWidget(self.list)
+        self.setLayout(layout)
+
+    def on_selection_changed(self):
+        self.parent.refresh_selections()
+
+    def get_selected(self):
+        return self.list.selectedItems()
 
 
 class FrameworkSelection(QWidget):
@@ -71,7 +93,6 @@ class FrameworkSelection(QWidget):
             action.triggered.connect(
                 lambda checked, f=framework, i=item: self.set_framework(i, f))
 
-        # Show menu at the item position
         rect = self.list.visualItemRect(item)
         pos = self.list.mapToGlobal(rect.topRight())
         menu.exec(pos)
@@ -143,22 +164,29 @@ class StrSelection(QWidget):
             self.list.takeItem(row)
 
 
-class Selection(QWidget):
+class Selections(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.container = QWidget()
         self.container_layout = QVBoxLayout()
         self.container.setLayout(self.container_layout)
+        self.scroll = QScrollArea()
+        self.scroll.setWidget(self.container)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
-        self.divider = QPushButton('⇿')
+        self.divider = QFrame()
+        self.divider.setFrameShape(QFrame.Shape.VLine)
         self.divider.setCursor(Qt.CursorShape.SplitHCursor)
-        self.divider.setFixedWidth(20)
-
+        self.divider.setFixedWidth(8)
+        self.divider.setStyleSheet("QFrame { background-color: #fff; }")
         self.layout = QHBoxLayout()
-        self.layout.addWidget(self.container, stretch=0)
-        self.layout.addWidget(self.divider, stretch=0)
+        self.layout.addWidget(self.scroll)
+        self.layout.addWidget(self.divider)
         self.setLayout(self.layout)
-
         self.dragging = False
         self.divider.mousePressEvent = self.start_drag
         self.divider.mouseMoveEvent = self.do_drag
@@ -176,10 +204,16 @@ class Selection(QWidget):
             local_pos = self.mapFromGlobal(global_pos)
             new_width = local_pos.x()
             if new_width >= 0:
-                self.container.setFixedWidth(new_width)
+                self.scroll.setFixedWidth(new_width)
 
     def end_drag(self, event):
         self.dragging = False
+        self.container_layout.isQuickItemType
+
+    def clear(self):
+        while self.container_layout.count() > 1:
+            item = self.container_layout.takeAt(1)
+            item.widget().deleteLater()
 
 
 class MatplotlibWidget(QWidget):
@@ -189,46 +223,60 @@ class MatplotlibWidget(QWidget):
         self.canvas = FigureCanvas(self.figure)
         layout = QVBoxLayout()
         inner = QHBoxLayout()
-        self.selection = Selection()
-        inner.addWidget(self.selection)
-        inner.addWidget(self.canvas, stretch=0)
+        self.selections = Selections()
+        refresh_layout = QHBoxLayout()
+        inner.addWidget(self.selections)
+        inner.addWidget(self.canvas, stretch=1)
         layout.addLayout(inner)
-        self.refresh_button = QPushButton("refresh plot")
-        self.refresh_button.clicked.connect(self.refresh_plot)
-        layout.addWidget(self.refresh_button)
-        self.update_plots()
+        self.refresh_button = QPushButton("refresh plots")
+        self.refresh_button.clicked.connect(lambda: self.refresh_plots(False))
+        self.redraw_button = QPushButton("redraw plot")
+        self.redraw_button.clicked.connect(self.redraw_plot)
+        refresh_layout.addWidget(self.refresh_button)
+        refresh_layout.addWidget(self.redraw_button)
+        layout.addLayout(refresh_layout)
+        self.refresh_plots(True)
         self.setLayout(layout)
         self.canvas.draw()
 
-    def update_plots(self):
+    def refresh_selections(self):
+        self.selections.clear()
+        self.selections.add_selection(self.plot_selection)
+
+        selected = self.plot_selection.get_selected()
+        if selected != []:
+            assert len(selected) == 1
+            self.plot = importlib.import_module(
+                f"chopper.plots.{selected[0].text()}")
+            sig = inspect.signature(self.plot.get_data)
+            defaults = {
+                (name, param.annotation): param.default
+                for name, param in sig.parameters.items()
+                if param.default is not inspect._empty
+            }
+            for (name, ann), vals in defaults.items():
+                if ann == Tuple[str]:
+                    self.selections.add_selection(
+                        StrSelection(vals, f"{name}: {ann}"))
+                elif ann == bool:
+                    self.selections.add_selection(
+                        BoolSelection(vals, f"{name}: {ann}"))
+                elif ann == Tuple[Framework]:
+                    self.selections.add_selection(
+                        FrameworkSelection(vals, f"{name}: {ann}"))
+                else:
+                    raise TypeError("Unknown annotation")
+
+    def refresh_plots(self, refresh_sels: bool = False):
         self.plot_modules = tuple(
             name for _, name, _ in pkgutil.iter_modules(chopper.plots.__path__))
+        self.plot_selection = PlotSelection(self.plot_modules, parent=self)
+        if refresh_sels:
+            self.refresh_selections()
 
-    def refresh_plot(self):
-        self.update_plots()
-        plot = importlib.import_module(f"chopper.plots.{self.plot_modules[0]}")
-        sig = inspect.signature(plot.get_data)
-        defaults = {
-            (name, param.annotation): param.default
-            for name, param in sig.parameters.items()
-            if param.default is not inspect._empty
-        }
-        for (name, ann), vals in defaults.items():
-            if ann == Tuple[str]:
-                self.selection.add_selection(
-                    StrSelection(vals, f"{name}: {ann}"))
-            elif ann == bool:
-                self.selection.add_selection(
-                    BoolSelection(vals, f"{name}: {ann}"))
-            elif ann == Tuple[Framework]:
-                self.selection.add_selection(
-                    FrameworkSelection(vals, f"{name}: {ann}"))
-            else:
-                raise TypeError("Unknown annotation")
-
-        # input_data = plot.get_data()
-        print(defaults.keys())
-        # plot.draw(self.figure)
+    def redraw_plot(self):
+        input_data = self.plot.get_data()
+        self.plot.draw(self.figure, input_data)
         self.canvas.draw()
 
 
