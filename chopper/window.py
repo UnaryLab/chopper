@@ -41,15 +41,12 @@ class PlotSelection(QWidget):
             item = QListWidgetItem(val)
             self.list.addItem(item)
 
-        self.list.itemSelectionChanged.connect(self.on_selection_changed)
+        self.list.itemSelectionChanged.connect(self.parent.refresh_selections)
 
         layout = QVBoxLayout()
         layout.addWidget(label)
         layout.addWidget(self.list)
         self.setLayout(layout)
-
-    def on_selection_changed(self):
-        self.parent.refresh_selections()
 
     def get_selected(self):
         return self.list.selectedItems()
@@ -111,15 +108,18 @@ class FrameworkSelection(QWidget):
             row = self.list.row(item)
             self.list.takeItem(row)
 
-    def get_values(self):
-        return [self.list.item(i).data(Qt.ItemDataRole.UserRole)
-                for i in range(self.list.count())]
+    def get_selections(self):
+        return tuple(self.list.item(i).data(Qt.ItemDataRole.UserRole)
+                     for i in range(self.list.count()))
 
 
 class BoolSelection(QCheckBox):
     def __init__(self, val: bool, name: str, parent=None):
         super().__init__(name, parent)
         self.setChecked(val)
+
+    def get_selections(self):
+        return self.isChecked()
 
 
 class StrSelection(QWidget):
@@ -162,6 +162,9 @@ class StrSelection(QWidget):
         for item in self.list.selectedItems():
             row = self.list.row(item)
             self.list.takeItem(row)
+
+    def get_selections(self):
+        return tuple(self.list.item(i).text() for i in range(self.list.count()))
 
 
 class Selections(QWidget):
@@ -215,12 +218,16 @@ class Selections(QWidget):
             item = self.container_layout.takeAt(1)
             item.widget().deleteLater()
 
+    def get_selections(self):
+        return tuple(self.container_layout.itemAt(i).widget().get_selections() for i in range(1, self.container_layout.count()))
+
 
 class MatplotlibWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.figure = Figure()
         self.canvas = FigureCanvas(self.figure)
+        self.plot = None
         layout = QVBoxLayout()
         inner = QHBoxLayout()
         self.selections = Selections()
@@ -232,6 +239,7 @@ class MatplotlibWidget(QWidget):
         self.refresh_button.clicked.connect(lambda: self.refresh_plots(False))
         self.redraw_button = QPushButton("redraw plot")
         self.redraw_button.clicked.connect(self.redraw_plot)
+        self.redraw_button.setDisabled(True)
         refresh_layout.addWidget(self.refresh_button)
         refresh_layout.addWidget(self.redraw_button)
         layout.addLayout(refresh_layout)
@@ -248,24 +256,25 @@ class MatplotlibWidget(QWidget):
             assert len(selected) == 1
             self.plot = importlib.import_module(
                 f"chopper.plots.{selected[0].text()}")
+            self.redraw_button.setEnabled(True)
             sig = inspect.signature(self.plot.get_data)
             defaults = {
-                (name, param.annotation): param.default
+                (name, inspect.formatannotation(param.annotation)): param.default
                 for name, param in sig.parameters.items()
                 if param.default is not inspect._empty
             }
             for (name, ann), vals in defaults.items():
-                if ann == Tuple[str]:
+                if ann == inspect.formatannotation(Tuple[str]):
                     self.selections.add_selection(
                         StrSelection(vals, f"{name}: {ann}"))
-                elif ann == bool:
+                elif ann == inspect.formatannotation(bool):
                     self.selections.add_selection(
                         BoolSelection(vals, f"{name}: {ann}"))
-                elif ann == Tuple[Framework]:
+                elif ann == inspect.formatannotation(Tuple[Framework]):
                     self.selections.add_selection(
                         FrameworkSelection(vals, f"{name}: {ann}"))
                 else:
-                    raise TypeError("Unknown annotation")
+                    raise TypeError(f"Unknown annotation: {ann}")
 
     def refresh_plots(self, refresh_sels: bool = False):
         self.plot_modules = tuple(
@@ -275,7 +284,8 @@ class MatplotlibWidget(QWidget):
             self.refresh_selections()
 
     def redraw_plot(self):
-        input_data = self.plot.get_data()
+        sels = self.selections.get_selections()
+        input_data = self.plot.get_data(*sels)
         self.plot.draw(self.figure, input_data)
         self.canvas.draw()
 
