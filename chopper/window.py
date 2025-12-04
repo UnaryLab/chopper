@@ -26,6 +26,7 @@ from chopper.common.annotations import Framework
 import importlib
 import inspect
 import pkgutil
+import enum
 from typing import Tuple
 
 
@@ -167,11 +168,23 @@ class StrSelection(QWidget):
         return tuple(self.list.item(i).text() for i in range(self.list.count()))
 
 
+class SelectionType(enum.Enum):
+    plot = enum.auto()
+    data = enum.auto()
+    draw = enum.auto()
+
+
 class Selections(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.container = QWidget()
         self.container_layout = QVBoxLayout()
+        self.plot_layout = QVBoxLayout()
+        self.data_layout = QVBoxLayout()
+        self.draw_layout = QVBoxLayout()
+        self.container_layout.addLayout(self.plot_layout)
+        self.container_layout.addLayout(self.data_layout)
+        self.container_layout.addLayout(self.draw_layout)
         self.container.setLayout(self.container_layout)
         self.scroll = QScrollArea()
         self.scroll.setWidget(self.container)
@@ -195,8 +208,14 @@ class Selections(QWidget):
         self.divider.mouseMoveEvent = self.do_drag
         self.divider.mouseReleaseEvent = self.end_drag
 
-    def add_selection(self, selection):
-        self.container_layout.addWidget(selection)
+    def add_selection(self, selection, stype: SelectionType):
+        match stype:
+            case SelectionType.plot:
+                self.plot_layout.addWidget(selection)
+            case SelectionType.data:
+                self.data_layout.addWidget(selection)
+            case SelectionType.draw:
+                self.draw_layout.addWidget(selection)
 
     def start_drag(self, event):
         self.dragging = True
@@ -214,12 +233,18 @@ class Selections(QWidget):
         self.container_layout.isQuickItemType
 
     def clear(self):
-        while self.container_layout.count() > 1:
-            item = self.container_layout.takeAt(1)
+        while self.data_layout.count() > 0:
+            item = self.data_layout.takeAt(1)
+            item.widget().deleteLater()
+        while self.draw_layout.count() > 0:
+            item = self.draw_layout.takeAt(1)
             item.widget().deleteLater()
 
-    def get_selections(self):
-        return tuple(self.container_layout.itemAt(i).widget().get_selections() for i in range(1, self.container_layout.count()))
+    def get_data_sels(self):
+        return tuple(self.data_layout.itemAt(i).widget().get_selections() for i in range(self.data_layout.count()))
+
+    def get_draw_sels(self):
+        return tuple(self.draw_layout.itemAt(i).widget().get_selections() for i in range(self.draw_layout.count()))
 
 
 class MatplotlibWidget(QWidget):
@@ -249,32 +274,54 @@ class MatplotlibWidget(QWidget):
 
     def refresh_selections(self):
         self.selections.clear()
-        self.selections.add_selection(self.plot_selection)
+        self.selections.add_selection(self.plot_selection, SelectionType.plot)
 
-        selected = self.plot_selection.get_selected()
-        if selected != []:
-            assert len(selected) == 1
-            self.plot = importlib.import_module(
-                f"chopper.plots.{selected[0].text()}")
-            self.redraw_button.setEnabled(True)
-            sig = inspect.signature(self.plot.get_data)
-            defaults = {
-                (name, inspect.formatannotation(param.annotation)): param.default
-                for name, param in sig.parameters.items()
-                if param.default is not inspect._empty
-            }
-            for (name, ann), vals in defaults.items():
-                if ann == inspect.formatannotation(Tuple[str]):
-                    self.selections.add_selection(
-                        StrSelection(vals, f"{name}: {ann}"))
-                elif ann == inspect.formatannotation(bool):
-                    self.selections.add_selection(
-                        BoolSelection(vals, f"{name}: {ann}"))
-                elif ann == inspect.formatannotation(Tuple[Framework]):
-                    self.selections.add_selection(
-                        FrameworkSelection(vals, f"{name}: {ann}"))
-                else:
-                    raise TypeError(f"Unknown annotation: {ann}")
+        plot_selected = self.plot_selection.get_selected()
+        if plot_selected == []:
+            return
+        assert len(plot_selected) == 1
+        self.plot = importlib.import_module(
+            f"chopper.plots.{plot_selected[0].text()}")
+        self.redraw_button.setEnabled(True)
+
+        data_sig = inspect.signature(self.plot.get_data)
+        data_defaults = {
+            (name, inspect.formatannotation(param.annotation)): param.default
+            for name, param in data_sig.parameters.items()
+            if param.default is not inspect._empty
+        }
+        for (name, ann), vals in data_defaults.items():
+            if ann == inspect.formatannotation(Tuple[str]):
+                self.selections.add_selection(
+                    StrSelection(vals, f"{name}: {ann}"), SelectionType.data)
+            elif ann == inspect.formatannotation(bool):
+                self.selections.add_selection(
+                    BoolSelection(vals, f"{name}: {ann}"), SelectionType.data)
+            elif ann == inspect.formatannotation(Tuple[Framework]):
+                self.selections.add_selection(
+                    FrameworkSelection(vals, f"{name}: {ann}"), SelectionType.data)
+            else:
+                raise TypeError(f"Unknown annotation: {ann}")
+
+        draw_sig = inspect.signature(self.plot.draw)
+        draw_defaults = {
+            (name, inspect.formatannotation(param.annotation)): param.default
+            for name, param in draw_sig.parameters.items()
+            if param.default is not inspect._empty
+        }
+
+        for (name, ann), vals in draw_defaults.items():
+            if ann == inspect.formatannotation(Tuple[str]):
+                self.selections.add_selection(
+                    StrSelection(vals, f"{name}: {ann}"), SelectionType.draw)
+            elif ann == inspect.formatannotation(bool):
+                self.selections.add_selection(
+                    BoolSelection(vals, f"{name}: {ann}"), SelectionType.draw)
+            elif ann == inspect.formatannotation(Tuple[Framework]):
+                self.selections.add_selection(
+                    FrameworkSelection(vals, f"{name}: {ann}"), SelectionType.draw)
+            else:
+                raise TypeError(f"Unknown annotation: {ann}")
 
     def refresh_plots(self, refresh_sels: bool = False):
         self.plot_modules = tuple(
@@ -284,9 +331,10 @@ class MatplotlibWidget(QWidget):
             self.refresh_selections()
 
     def redraw_plot(self):
-        sels = self.selections.get_selections()
-        input_data = self.plot.get_data(*sels)
-        self.plot.draw(self.figure, input_data)
+        data_sels = self.selections.get_data_sels()
+        draw_sels = self.selections.get_draw_sels()
+        input_data = self.plot.get_data(*data_sels)
+        self.plot.draw(self.figure, input_data, *draw_sels)
         self.canvas.draw()
 
 

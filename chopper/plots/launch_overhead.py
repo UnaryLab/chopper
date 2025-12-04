@@ -98,22 +98,6 @@ def get_data(
         f"{'FSDPv2' if fw == Framework.FSDPv2 else 'FSDPv1'}-{config}": pd.read_pickle(f"{pkl_dir}/ts.pkl")
         for fw, config, pkl_dir in zip(frameworks, configs, pkl_dirs)
     }
-    if two_axes:
-        ops = (
-            'f_ie',
-            'b_ga',
-            'opt_step',
-            'f_attn_n',
-            'b_mlp_dp',
-            'b_ie',
-        )
-    else:
-        ops = (
-            'f_ie',
-            'f_attn_n',
-            'b_mlp_dp',
-            'b_ie',
-        )
 
     metrics = (
         'Launch Overhead',
@@ -165,11 +149,24 @@ def get_data(
         #           [metric].mean().nlargest(k))
         #     print('-'*(10+len(setup)))
 
-    return data, ops, two_axes
+    return data, two_axes
 
 
-def draw(fig: Figure, input_data):
-    data, ops, two_axes = input_data
+def draw(
+        fig: Figure,
+        input_data,
+        lops: Tuple[str] = (
+            'f_ie',
+            'b_ga',
+            'opt_step',
+        ),
+        rops: Tuple[str] = (
+            'f_attn_n',
+            'b_mlp_dp',
+            'b_ie',
+        )):
+    data, two_axes = input_data
+    ops = lops + rops
     rgb_colors = (
         rgb(0x66, 0xc2, 0xa5),
         rgb(0xfc, 0x8d, 0x62),
@@ -200,17 +197,14 @@ def draw(fig: Figure, input_data):
     }
 
     n_rows = 1
-    n_cols = len(ops) + 1
+    n_cols = len(ops) + (1 if two_axes else 0)
 
     x = np.arange(len(params))
     fig.clear()
     width_ratios = (
-        (tuple(1 for _ in range(3)) + (.1,) +
-         tuple(1 for _ in range(3))) if two_axes else
-        (
-            tuple(1 for _ in range(1)) + (.1,) +
-            tuple(1 for _ in range(3))
-        )
+        (tuple(1 for _ in range(len(lops))) + (.1,) +
+         tuple(1 for _ in range(len(rops)))) if two_axes else
+        (tuple(1 for _ in range(len(ops))))
 
     )
     gs = fig.add_gridspec(n_rows, n_cols,
@@ -218,13 +212,14 @@ def draw(fig: Figure, input_data):
     axs = [fig.add_subplot(gs[0, i]) for i in range(n_cols)]
 
     ax_idxs = (
-        list(tuple(range(3)) + tuple(range(4, n_cols)))
+        list(tuple(range(len(lops))) + tuple(range(len(lops)+1, n_cols)))
         if two_axes else
-        list(tuple(range(1)) + tuple(range(2, n_cols)))
+        list(tuple(range(0, n_cols)))
     )
     g_ymin = None
     g_ymax = None
-    axs[3 if two_axes else 1].set_visible(False)
+    if two_axes:
+        axs[len(lops)].set_visible(False)
 
     for s in setups:
         variant = s.split('-')[0]
@@ -235,7 +230,7 @@ def draw(fig: Figure, input_data):
             if ax_idx == ax_idxs[0]:
                 ax.set_ylabel("norm time", labelpad=0)
                 ax.spines['right'].set_visible(False)
-            elif ax_idx == ax_idxs[3 if two_axes else 1]:
+            elif two_axes and ax_idx == ax_idxs[len(lops)]:
                 ax.spines['right'].set_visible(False)
                 ax.set_yticklabels([])
                 ax.tick_params(axis='y', length=0)
@@ -251,7 +246,7 @@ def draw(fig: Figure, input_data):
                 ax.set_yticklabels([])
                 ax.tick_params(axis='y', length=0)
 
-            if ax_idx > (3 if two_axes else 1):
+            if two_axes and ax_idx >= len(lops)+1:
                 ax.set_ylim((0, 1.1))
             else:
                 _ymin, _ymax = ax.get_ylim()
@@ -323,34 +318,36 @@ def draw(fig: Figure, input_data):
         for m in variants
     ])
 
-    for i in range(3 if two_axes else 1):
-        axs[i].set_ylim((g_ymin, g_ymax))
+    if two_axes:
+        for i in range(len(lops)):
+            axs[i].set_ylim((g_ymin, g_ymax))
 
-    axl = axs[2 if two_axes else 0]
-    axr = axs[4 if two_axes else 2]
+    if two_axes:
+        axl = axs[len(lops)-1]
+        axr = axs[len(lops)+1]
 
-    posl = axl.get_position()
-    posr = axr.get_position()
+        posl = axl.get_position()
+        posr = axr.get_position()
 
-    y_val = 1.0
-    transl = axl.transData + axl.transAxes.inverted()
-    transr = axr.transData + axr.transAxes.inverted()
+        y_val = 1.0
+        transl = axl.transData + axl.transAxes.inverted()
+        transr = axr.transData + axr.transAxes.inverted()
 
-    yl_axes = transl.transform((0, y_val))[1]
-    yr_axes = transr.transform((0, y_val))[1]
+        yl_axes = transl.transform((0, y_val))[1]
+        yr_axes = transr.transform((0, y_val))[1]
 
-    yl_fig = posl.y0 + yl_axes * posl.height
-    yr_fig = posr.y0 + yr_axes * posr.height
+        yl_fig = posl.y0 + yl_axes * posl.height
+        yr_fig = posr.y0 + yr_axes * posr.height
 
-    fig.add_artist(Line2D(
-        [posl.x1, posr.x0],
-        [yl_fig, yr_fig],
-        transform=fig.transFigure,
-        color=rcParams['grid.color'],
-        linewidth=rcParams['grid.linewidth'],
-        linestyle='--',
-        alpha=0.5
-    ))
+        fig.add_artist(Line2D(
+            [posl.x1, posr.x0],
+            [yl_fig, yr_fig],
+            transform=fig.transFigure,
+            color=rcParams['grid.color'],
+            linewidth=rcParams['grid.linewidth'],
+            linestyle='--',
+            alpha=0.5
+        ))
 
     fig.legend(
         handles=legend_handles,
