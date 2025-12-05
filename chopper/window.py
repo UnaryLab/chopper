@@ -240,6 +240,7 @@ class Selections(QWidget):
     def toggle_box(self, group_box, checked):
         for i in range(group_box.layout().count()):
             widget = group_box.layout().itemAt(i).widget()
+            # placeholder text visibility should be inverse of selections
             if i == 0:
                 widget.setVisible(not checked)
             else:
@@ -269,15 +270,14 @@ class Selections(QWidget):
 
     def end_drag(self, event):
         self.dragging = False
-        self.container_layout.isQuickItemType
 
     def clear(self):
-        # pop from layout, don't take at index i
+        # pop from layout
         # take index 1 to skip placeholder text
-        for i in range(self.data_layout.count()-1):
+        for _ in range(self.data_layout.count()-1):
             item = self.data_layout.takeAt(1)
             item.widget().deleteLater()
-        for i in range(self.draw_layout.count()-1):
+        for _ in range(self.draw_layout.count()-1):
             item = self.draw_layout.takeAt(1)
             item.widget().deleteLater()
 
