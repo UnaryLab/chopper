@@ -66,7 +66,6 @@ def get_data(
         '~/data/ispass_v2/k002-003_MODEL_NAMEllama_USE_FSDP20_ITERS20_WAIT9_ACTIVE10_POWER_MAN0_ADJUST_STEPS3_WAIT_STEPS50_INITIAL_POWER_CAP750_REALLOC_POWER0_MAX_ADJ15_USE_SUM1_USE_LAST0_USE_MAX0_USE_GLOBAL1_POWER_BUDGET0_FP80_GRAD_ACC15_PROFILE_TYPE2/b1s8/',
         '~/data/ispass_v2/k002-003_MODEL_NAMEllama_USE_FSDP20_ITERS20_WAIT9_ACTIVE10_POWER_MAN0_ADJUST_STEPS3_WAIT_STEPS50_INITIAL_POWER_CAP750_REALLOC_POWER0_MAX_ADJ15_USE_SUM1_USE_LAST0_USE_MAX0_USE_GLOBAL1_POWER_BUDGET0_FP80_GRAD_ACC15_PROFILE_TYPE2/b2s8/',
     ),
-    two_axes: bool = True,
     frameworks: Tuple[Framework] = (
         Framework.FSDPv2,
         Framework.FSDPv2,
@@ -149,23 +148,25 @@ def get_data(
         #           [metric].mean().nlargest(k))
         #     print('-'*(10+len(setup)))
 
-    return data, two_axes
+    return data
 
 
 def draw(
-        fig: Figure,
-        input_data,
-        lops: Tuple[str] = (
-            'f_ie',
-            'b_ga',
-            'opt_step',
-        ),
-        rops: Tuple[str] = (
-            'f_attn_n',
-            'b_mlp_dp',
-            'b_ie',
-        )):
-    data, two_axes = input_data
+    fig: Figure,
+    input_data,
+    lops: Tuple[str] = (
+        'f_ie',
+        'b_ga',
+        'opt_step',
+    ),
+    rops: Tuple[str] = (
+        'f_attn_n',
+        'b_mlp_dp',
+        'b_ie',
+    ),
+    two_axes: bool = True,
+):
+    data = input_data
     ops = lops + rops
     rgb_colors = (
         rgb(0x66, 0xc2, 0xa5),

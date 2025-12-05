@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QMenu,
     QScrollArea,
     QFrame,
+    QGroupBox,
 )
 from PyQt6.QtCore import Qt
 
@@ -54,9 +55,11 @@ class PlotSelection(QWidget):
 
 
 class FrameworkSelection(QWidget):
-    def __init__(self, vals: list, name: str, parent=None):
+    def __init__(self, vals: list, name: str, ann, parent=None):
         super().__init__(parent)
-        label = QLabel(name)
+        self.name = name
+        self.ann = ann
+        label = QLabel(f'{self.name}: {self.ann}')
 
         self.list = QListWidget()
         self.list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
@@ -110,23 +113,27 @@ class FrameworkSelection(QWidget):
             self.list.takeItem(row)
 
     def get_selections(self):
-        return tuple(self.list.item(i).data(Qt.ItemDataRole.UserRole)
-                     for i in range(self.list.count()))
+        return self.name, tuple(self.list.item(i).data(Qt.ItemDataRole.UserRole)
+                                for i in range(self.list.count()))
 
 
 class BoolSelection(QCheckBox):
-    def __init__(self, val: bool, name: str, parent=None):
-        super().__init__(name, parent)
+    def __init__(self, val: bool, name: str, ann, parent=None):
+        super().__init__(f'{name}: {ann}', parent)
         self.setChecked(val)
+        self.name = name
+        self.ann = ann
 
     def get_selections(self):
-        return self.isChecked()
+        return self.name, self.isChecked()
 
 
 class StrSelection(QWidget):
-    def __init__(self, strings: Tuple[str], name: str, parent=None):
+    def __init__(self, strings: Tuple[str], name: str, ann, parent=None):
         super().__init__(parent)
 
+        self.name = name
+        self.ann = ann
         self.list = QListWidget()
         self.list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self.list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
@@ -147,7 +154,7 @@ class StrSelection(QWidget):
         add_rem.addWidget(self.remove_button)
 
         layout = QVBoxLayout()
-        layout.addWidget(QLabel(name))
+        layout.addWidget(QLabel(f'{self.name}: {self.ann}'))
         layout.addLayout(add_rem)
         layout.addWidget(self.list)
         self.setLayout(layout)
@@ -165,7 +172,7 @@ class StrSelection(QWidget):
             self.list.takeItem(row)
 
     def get_selections(self):
-        return tuple(self.list.item(i).text() for i in range(self.list.count()))
+        return self.name, tuple(self.list.item(i).text() for i in range(self.list.count()))
 
 
 class SelectionType(enum.Enum):
@@ -179,12 +186,34 @@ class Selections(QWidget):
         super().__init__(parent)
         self.container = QWidget()
         self.container_layout = QVBoxLayout()
+
         self.plot_layout = QVBoxLayout()
+
+        self.data_box = QGroupBox("data args")
+        self.data_box_placeholder = QLabel("check box to expand")
+        self.data_box.setCheckable(True)
+        self.data_box.setChecked(False)
         self.data_layout = QVBoxLayout()
+        self.data_layout.addWidget(self.data_box_placeholder)
+        self.data_box.setLayout(self.data_layout)
+        self.toggle_box(self.data_box, False)
+        self.data_box.toggled.connect(
+            lambda checked: self.toggle_box(self.data_box, checked))
+
+        self.draw_box = QGroupBox("draw args")
+        self.draw_box_placeholder = QLabel("check box to expand")
+        self.draw_box.setCheckable(True)
+        self.draw_box.setChecked(False)
         self.draw_layout = QVBoxLayout()
+        self.draw_layout.addWidget(self.draw_box_placeholder)
+        self.draw_box.setLayout(self.draw_layout)
+        self.toggle_box(self.draw_box, False)
+        self.draw_box.toggled.connect(
+            lambda checked: self.toggle_box(self.draw_box, checked))
+
         self.container_layout.addLayout(self.plot_layout)
-        self.container_layout.addLayout(self.data_layout)
-        self.container_layout.addLayout(self.draw_layout)
+        self.container_layout.addWidget(self.data_box)
+        self.container_layout.addWidget(self.draw_box)
         self.container.setLayout(self.container_layout)
         self.scroll = QScrollArea()
         self.scroll.setWidget(self.container)
@@ -208,13 +237,23 @@ class Selections(QWidget):
         self.divider.mouseMoveEvent = self.do_drag
         self.divider.mouseReleaseEvent = self.end_drag
 
+    def toggle_box(self, group_box, checked):
+        for i in range(group_box.layout().count()):
+            widget = group_box.layout().itemAt(i).widget()
+            if i == 0:
+                widget.setVisible(not checked)
+            else:
+                widget.setVisible(checked)
+
     def add_selection(self, selection, stype: SelectionType):
         match stype:
             case SelectionType.plot:
                 self.plot_layout.addWidget(selection)
             case SelectionType.data:
+                selection.setVisible(self.data_box.isChecked())
                 self.data_layout.addWidget(selection)
             case SelectionType.draw:
+                selection.setVisible(self.draw_box.isChecked())
                 self.draw_layout.addWidget(selection)
 
     def start_drag(self, event):
@@ -233,18 +272,26 @@ class Selections(QWidget):
         self.container_layout.isQuickItemType
 
     def clear(self):
-        while self.data_layout.count() > 0:
+        # pop from layout, don't take at index i
+        # take index 1 to skip placeholder text
+        for i in range(self.data_layout.count()-1):
             item = self.data_layout.takeAt(1)
             item.widget().deleteLater()
-        while self.draw_layout.count() > 0:
+        for i in range(self.draw_layout.count()-1):
             item = self.draw_layout.takeAt(1)
             item.widget().deleteLater()
 
     def get_data_sels(self):
-        return tuple(self.data_layout.itemAt(i).widget().get_selections() for i in range(self.data_layout.count()))
+        return dict(self.data_layout.itemAt(i).widget().get_selections()
+                    for i in range(
+            1,  # skip placeholder text
+            self.data_layout.count()))
 
     def get_draw_sels(self):
-        return tuple(self.draw_layout.itemAt(i).widget().get_selections() for i in range(self.draw_layout.count()))
+        return dict(self.draw_layout.itemAt(i).widget().get_selections()
+                    for i in range(
+            1,  # skip placeholder text
+            self.draw_layout.count()))
 
 
 class MatplotlibWidget(QWidget):
@@ -253,6 +300,11 @@ class MatplotlibWidget(QWidget):
         self.figure = Figure()
         self.canvas = FigureCanvas(self.figure)
         self.plot = None
+        # WARN hold onto all plot data and selections
+        # Maybe wastes memory
+        self.plot_data = {}
+        self.data_selections = {}
+        self.draw_selections = {}
         layout = QVBoxLayout()
         inner = QHBoxLayout()
         self.selections = Selections()
@@ -260,15 +312,21 @@ class MatplotlibWidget(QWidget):
         inner.addWidget(self.selections)
         inner.addWidget(self.canvas, stretch=1)
         layout.addLayout(inner)
-        self.refresh_button = QPushButton("refresh plots")
-        self.refresh_button.clicked.connect(lambda: self.refresh_plots(False))
-        self.redraw_button = QPushButton("redraw plot")
-        self.redraw_button.clicked.connect(self.redraw_plot)
-        self.redraw_button.setDisabled(True)
-        refresh_layout.addWidget(self.refresh_button)
-        refresh_layout.addWidget(self.redraw_button)
+
+        self.data_button = QPushButton("load data")
+        self.data_button.clicked.connect(self.load_data)
+        self.data_button.setDisabled(True)
+        self.draw_button = QPushButton("redraw plot")
+        self.draw_button.clicked.connect(self.draw_plot)
+        self.draw_button.setDisabled(True)
+        refresh_layout.addWidget(self.data_button)
+        refresh_layout.addWidget(self.draw_button)
+
         layout.addLayout(refresh_layout)
-        self.refresh_plots(True)
+        self.plot_modules = tuple(
+            name for _, name, _ in pkgutil.iter_modules(chopper.plots.__path__))
+        self.plot_selection = PlotSelection(self.plot_modules, parent=self)
+        self.refresh_selections()
         self.setLayout(layout)
         self.canvas.draw()
 
@@ -282,7 +340,8 @@ class MatplotlibWidget(QWidget):
         assert len(plot_selected) == 1
         self.plot = importlib.import_module(
             f"chopper.plots.{plot_selected[0].text()}")
-        self.redraw_button.setEnabled(True)
+        self.data_button.setEnabled(True)
+        self.draw_button.setEnabled(self.plot in self.plot_data)
 
         data_sig = inspect.signature(self.plot.get_data)
         data_defaults = {
@@ -290,16 +349,18 @@ class MatplotlibWidget(QWidget):
             for name, param in data_sig.parameters.items()
             if param.default is not inspect._empty
         }
+        plot_data_slot = self.data_selections.setdefault(self.plot, {})
         for (name, ann), vals in data_defaults.items():
+            cache_vals = plot_data_slot.setdefault(name, vals)
             if ann == inspect.formatannotation(Tuple[str]):
                 self.selections.add_selection(
-                    StrSelection(vals, f"{name}: {ann}"), SelectionType.data)
+                    StrSelection(cache_vals, name, ann), SelectionType.data)
             elif ann == inspect.formatannotation(bool):
                 self.selections.add_selection(
-                    BoolSelection(vals, f"{name}: {ann}"), SelectionType.data)
+                    BoolSelection(cache_vals, name, ann), SelectionType.data)
             elif ann == inspect.formatannotation(Tuple[Framework]):
                 self.selections.add_selection(
-                    FrameworkSelection(vals, f"{name}: {ann}"), SelectionType.data)
+                    FrameworkSelection(cache_vals, name, ann), SelectionType.data)
             else:
                 raise TypeError(f"Unknown annotation: {ann}")
 
@@ -310,31 +371,33 @@ class MatplotlibWidget(QWidget):
             if param.default is not inspect._empty
         }
 
+        plot_draw_slot = self.draw_selections.setdefault(self.plot, {})
         for (name, ann), vals in draw_defaults.items():
+            cache_vals = plot_draw_slot.setdefault(name, vals)
             if ann == inspect.formatannotation(Tuple[str]):
                 self.selections.add_selection(
-                    StrSelection(vals, f"{name}: {ann}"), SelectionType.draw)
+                    StrSelection(cache_vals, name, ann), SelectionType.draw)
             elif ann == inspect.formatannotation(bool):
                 self.selections.add_selection(
-                    BoolSelection(vals, f"{name}: {ann}"), SelectionType.draw)
+                    BoolSelection(cache_vals, name, ann), SelectionType.draw)
             elif ann == inspect.formatannotation(Tuple[Framework]):
                 self.selections.add_selection(
-                    FrameworkSelection(vals, f"{name}: {ann}"), SelectionType.draw)
+                    FrameworkSelection(vals, name, ann), SelectionType.draw)
             else:
                 raise TypeError(f"Unknown annotation: {ann}")
 
-    def refresh_plots(self, refresh_sels: bool = False):
-        self.plot_modules = tuple(
-            name for _, name, _ in pkgutil.iter_modules(chopper.plots.__path__))
-        self.plot_selection = PlotSelection(self.plot_modules, parent=self)
-        if refresh_sels:
-            self.refresh_selections()
+    def load_data(self):
+        self.data_selections[self.plot] = self.selections.get_data_sels()
+        self.plot_data[self.plot] = self.plot.get_data(
+            **self.data_selections[self.plot])
+        self.draw_button.setEnabled(True)
 
-    def redraw_plot(self):
-        data_sels = self.selections.get_data_sels()
-        draw_sels = self.selections.get_draw_sels()
-        input_data = self.plot.get_data(*data_sels)
-        self.plot.draw(self.figure, input_data, *draw_sels)
+    def draw_plot(self):
+        assert self.plot in self.plot_data, "Plot data is not loaded"
+        self.draw_selections[self.plot] = self.selections.get_draw_sels()
+        print(self.draw_selections[self.plot])
+        self.plot.draw(
+            self.figure, self.plot_data[self.plot], **self.draw_selections[self.plot])
         self.canvas.draw()
 
 
