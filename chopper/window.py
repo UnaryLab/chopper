@@ -128,7 +128,7 @@ class BoolSelection(QCheckBox):
         return self.name, self.isChecked()
 
 
-class StrSelection(QWidget):
+class StrTupleSelection(QWidget):
     def __init__(self, strings: Tuple[str], name: str, ann, parent=None):
         super().__init__(parent)
 
@@ -173,6 +173,29 @@ class StrSelection(QWidget):
 
     def get_selections(self):
         return self.name, tuple(self.list.item(i).text() for i in range(self.list.count()))
+
+
+class StrSelection(QWidget):
+    def __init__(self, string: str, name: str, ann, parent=None):
+        super().__init__(parent)
+
+        self.name = name
+        self.ann = ann
+        self.list = QListWidget()
+        self.list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
+
+        self.item = QListWidgetItem(string)
+        self.item.setFlags(self.item.flags() | Qt.ItemFlag.ItemIsEditable)
+        self.list.addItem(self.item)
+
+        layout = QVBoxLayout()
+        layout.addWidget(QLabel(f'{self.name}: {self.ann}'))
+        layout.addWidget(self.list)
+        self.setLayout(layout)
+
+    def get_selections(self):
+        return self.name, self.item.text()
 
 
 class SelectionType(enum.Enum):
@@ -354,13 +377,16 @@ class MatplotlibWidget(QWidget):
             cache_vals = plot_data_slot.setdefault(name, vals)
             if ann == inspect.formatannotation(Tuple[str]):
                 self.selections.add_selection(
-                    StrSelection(cache_vals, name, ann), SelectionType.data)
+                    StrTupleSelection(cache_vals, name, ann), SelectionType.data)
             elif ann == inspect.formatannotation(bool):
                 self.selections.add_selection(
                     BoolSelection(cache_vals, name, ann), SelectionType.data)
             elif ann == inspect.formatannotation(Tuple[Framework]):
                 self.selections.add_selection(
                     FrameworkSelection(cache_vals, name, ann), SelectionType.data)
+            elif ann == inspect.formatannotation(str):
+                self.selections.add_selection(
+                    StrSelection(cache_vals, name, ann), SelectionType.data)
             else:
                 raise TypeError(f"Unknown annotation: {ann}")
 
@@ -376,13 +402,16 @@ class MatplotlibWidget(QWidget):
             cache_vals = plot_draw_slot.setdefault(name, vals)
             if ann == inspect.formatannotation(Tuple[str]):
                 self.selections.add_selection(
-                    StrSelection(cache_vals, name, ann), SelectionType.draw)
+                    StrTupleSelection(cache_vals, name, ann), SelectionType.draw)
             elif ann == inspect.formatannotation(bool):
                 self.selections.add_selection(
                     BoolSelection(cache_vals, name, ann), SelectionType.draw)
             elif ann == inspect.formatannotation(Tuple[Framework]):
                 self.selections.add_selection(
                     FrameworkSelection(vals, name, ann), SelectionType.draw)
+            elif ann == inspect.formatannotation(str):
+                self.selections.add_selection(
+                    StrSelection(cache_vals, name, ann), SelectionType.draw)
             else:
                 raise TypeError(f"Unknown annotation: {ann}")
 
@@ -395,7 +424,6 @@ class MatplotlibWidget(QWidget):
     def draw_plot(self):
         assert self.plot in self.plot_data, "Plot data is not loaded"
         self.draw_selections[self.plot] = self.selections.get_draw_sels()
-        print(self.draw_selections[self.plot])
         self.plot.draw(
             self.figure, self.plot_data[self.plot], **self.draw_selections[self.plot])
         self.canvas.draw()
