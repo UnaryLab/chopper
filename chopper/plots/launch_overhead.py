@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import pandas as pd
 import numpy as np
 import re
@@ -359,7 +357,3 @@ def draw(
         handlelength=0.5,
         frameon=False,
     )
-
-
-if __name__ == "__main__":
-    draw()
