@@ -237,7 +237,6 @@ def draw(
     fig.legend(
         handles=legend_handles,
         loc="upper center",
-        bbox_to_anchor=(.50, 1.04),
         ncol=len(color_dict.keys()),
         borderpad=0.17,
         handletextpad=0.4,
