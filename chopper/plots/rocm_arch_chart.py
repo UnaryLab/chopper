@@ -1405,6 +1405,7 @@ def draw(
     input_data,
     agg_meth: str = 'median',
     operation: str = 'b_mlp_gp',
+    fontsize: int = 8,
 ):
     if agg_meth == "median":
         comp_func = np.median
@@ -1435,7 +1436,7 @@ def draw(
 
     memory_analysis_ax.set_title("Memory Chart")
 
-    fig.patch.set_facecolor('gray')
+    # fig.patch.set_facecolor('gray')
     memory_analysis_ax.set_xlim(0, 16)
     memory_analysis_ax.set_ylim(0, 6)
     memory_analysis_ax.set_aspect('equal')
@@ -1464,18 +1465,17 @@ def draw(
     overlay_mult = 0.075
     ibuff_diff = overlay_mult*ibuff_width
 
-    fontsize = 10
 
     for i in range(n_ibuff):
         ibuff = mpatches.Rectangle(
-            (ibuff_x[0], ibuff_y[0]), ibuff_width, ibuff_height, edgecolor='orange', facecolor='black', lw=2)
+            (ibuff_x[0], ibuff_y[0]), ibuff_width, ibuff_height, edgecolor='red', facecolor='black', lw=2)
         memory_analysis_ax.add_patch(ibuff)
 
         for j in range(n_insts):
             inst_y = ibuff_y[0]+inst_height*(j+.5)
 
             memory_analysis_ax.annotate("", xytext=(ibuff_x[1], inst_y), xy=(ibuff_x[1]+inst_len+ibuff_diff*i, inst_y),
-                                        arrowprops=dict(arrowstyle="-", lw=2, color='orange'))
+                                        arrowprops=dict(arrowstyle="-", lw=2, color='red'))
             if i == 0:
                 trap_width = 0.125
                 trap_height = n_ibuff*ibuff_diff
@@ -1489,7 +1489,7 @@ def draw(
                         [inst_len+ibuff_x[1]+trap_width, inst_y +
                             ibuff_diff/2 - trap_height/4],
                     ],
-                    closed=True, edgecolor='orange', facecolor='white', lw=2
+                    closed=True, edgecolor='red', facecolor='gray', lw=2
                 )
                 memory_analysis_ax.add_patch(trapezoid)
                 memory_analysis_ax.annotate("",
@@ -1504,7 +1504,7 @@ def draw(
                                                 trap_width+dec_len,
                                                 inst_y+ibuff_diff/2-trap_height/2
                                             ),
-                                            arrowprops=dict(arrowstyle="-", lw=2, color='orange'))
+                                            arrowprops=dict(arrowstyle="-", lw=2, color='red'))
 
                 mux_width = trap_width*2
                 memory_analysis_ax.annotate("",
@@ -1518,15 +1518,15 @@ def draw(
                                                 dec_len+mux_width+wire_len,
                                                 inst_y+ibuff_diff/2-trap_height/2
                                             ),
-                                            arrowprops=dict(arrowstyle="->", lw=2, color='orange'))
+                                            arrowprops=dict(arrowstyle="->", lw=2, color='red'))
                 memory_analysis_ax.text(inst_len+ibuff_x[1]+trap_width+dec_len+mux_width+ibuff_diff,
                                         inst_y+ibuff_diff*3/2-trap_height/2,
-                                        f"{instr_dispatch[j]}: {agg_func(df[instr_dispatch[j]], Norm.PERC, duration, bw)}%", color="white", fontsize=fontsize, ha='left')
+                                        f"{instr_dispatch[j]}: {agg_func(df[instr_dispatch[j]], Norm.PERC, duration, bw)}%", color="gray", fontsize=fontsize, ha='left')
 
                 if j == 0:
                     mux_y = ibuff_y[1] - (n_ibuff-1)*ibuff_diff/2
                     memory_analysis_ax.text(inst_len+ibuff_x[1]+trap_width, mux_y + ibuff_diff,
-                                            "Instr Dispatch", color="white", fontsize=fontsize, ha='left')
+                                            "Instr Dispatch", color="gray", fontsize=fontsize, ha='left')
                     trapezoid = mpatches.Polygon(
                         [
                             [inst_len+ibuff_x[1]+trap_width+mux_width+dec_len, mux_y
@@ -1537,7 +1537,7 @@ def draw(
                             [inst_len+ibuff_x[1]+trap_width+mux_width +
                                 dec_len, mux_y - ibuff_height/30],
                         ],
-                        closed=True, edgecolor='orange', facecolor='white', lw=2
+                        closed=True, edgecolor='red', facecolor='gray', lw=2
                     )
                     memory_analysis_ax.add_patch(trapezoid)
 
@@ -1552,27 +1552,27 @@ def draw(
                 ibuff_y[1]-(n_ibuff-1)*ibuff_diff/2)
             exec_buff_height = exec_buff_y[1]-exec_buff_y[0]
             exec_buff = mpatches.Rectangle(
-                (exec_buff_x[0], exec_buff_y[0]), exec_buff_width, exec_buff_height, edgecolor='orange', facecolor='black', lw=2)
+                (exec_buff_x[0], exec_buff_y[0]), exec_buff_width, exec_buff_height, edgecolor='red', facecolor='black', lw=2)
             memory_analysis_ax.add_patch(exec_buff)
 
             memory_analysis_ax.text(exec_buff_x[0]+ibuff_diff, exec_buff_y[1] +
-                                    ibuff_diff, "Exec", color="white", fontsize=fontsize, ha='left')
+                                    ibuff_diff, "Exec", color="gray", fontsize=fontsize, ha='left')
             memory_analysis_ax.text(exec_buff_x[0]+ibuff_diff, exec_buff_y[1]-4*ibuff_diff,
-                                    "Active CUs", color="white", fontsize=fontsize, ha='left')
+                                    "Active CUs", color="gray", fontsize=fontsize, ha='left')
             memory_analysis_ax.text(exec_buff_x[0]+ibuff_diff, exec_buff_y[1]-6*ibuff_diff,
                                     f"{agg_func(df['Active CUs'], Norm.NONE, duration, bw):.0f}/{304}", color="Yellow", fontsize=fontsize, ha='left')
             memory_analysis_ax.text(exec_buff_x[0]+ibuff_diff, exec_buff_y[1]-10*ibuff_diff,
-                                    f"VGPRS: {agg_func(df['VGPR_Count'], Norm.NONE, duration, bw):.0f}", color="white", fontsize=fontsize, ha='left')
+                                    f"VGPRS: {agg_func(df['VGPR_Count'], Norm.NONE, duration, bw):.0f}", color="gray", fontsize=fontsize, ha='left')
             memory_analysis_ax.text(exec_buff_x[0]+ibuff_diff, exec_buff_y[1]-12*ibuff_diff,
-                                    f"SGPRS: {agg_func(df['SGPR_Count'], Norm.NONE, duration, bw):.0f}", color="white", fontsize=fontsize, ha='left')
+                                    f"SGPRS: {agg_func(df['SGPR_Count'], Norm.NONE, duration, bw):.0f}", color="gray", fontsize=fontsize, ha='left')
             memory_analysis_ax.text(exec_buff_x[0]+ibuff_diff, exec_buff_y[1]-14*ibuff_diff,
-                                    f"LDS Alloc: {agg_func(df['LDS_Block_Size'], Norm.NONE, duration, bw):.0f}", color="white", fontsize=fontsize, ha='left')
+                                    f"LDS Alloc: {agg_func(df['LDS_Block_Size'], Norm.NONE, duration, bw):.0f}", color="gray", fontsize=fontsize, ha='left')
             memory_analysis_ax.text(exec_buff_x[0]+ibuff_diff, exec_buff_y[1]-16*ibuff_diff,
-                                    f"Scratch Alloc: {agg_func(df['Scratch_Size'], Norm.NONE, duration, bw):.0f}", color="white", fontsize=fontsize, ha='left')
+                                    f"Scratch Alloc: {agg_func(df['Scratch_Size'], Norm.NONE, duration, bw):.0f}", color="gray", fontsize=fontsize, ha='left')
             memory_analysis_ax.text(exec_buff_x[0]+ibuff_diff, exec_buff_y[1]-18*ibuff_diff,
-                                    f"Wavefronts: {agg_func(df['SPI_CSN_WAVE'], Norm.NONE, duration, bw):.0f}", color="white", fontsize=fontsize, ha='left')
+                                    f"Wavefronts: {agg_func(df['SPI_CSN_WAVE'], Norm.NONE, duration, bw):.0f}", color="gray", fontsize=fontsize, ha='left')
             memory_analysis_ax.text(exec_buff_x[0]+ibuff_diff, exec_buff_y[1]-20*ibuff_diff,
-                                    f"Workgroups: {agg_func(df['SPI_CSN_NUM_THREADGROUPS'], Norm.NONE, duration, bw):.0f}", color="white", fontsize=fontsize, ha='left')
+                                    f"Workgroups: {agg_func(df['SPI_CSN_NUM_THREADGROUPS'], Norm.NONE, duration, bw):.0f}", color="gray", fontsize=fontsize, ha='left')
 
             lds_buff_width = 1
             lds_buff_height = exec_buff_height/5*.7
@@ -1582,7 +1582,7 @@ def draw(
             )
             lds_buff_y = exec_buff_y[1] - lds_buff_height/.7
             lds_buff = mpatches.Rectangle(
-                (lds_buff_x[0], lds_buff_y), lds_buff_width, lds_buff_height, edgecolor='orange', facecolor='white', lw=2)
+                (lds_buff_x[0], lds_buff_y), lds_buff_width, lds_buff_height, edgecolor='red', facecolor='gray', lw=2)
             memory_analysis_ax.annotate("",
                                         xytext=(
                                             lds_buff_x[0],
@@ -1592,13 +1592,13 @@ def draw(
                                             exec_buff_x[1],
                                             lds_buff_y + lds_buff_height/2
                                         ),
-                                        arrowprops=dict(arrowstyle="<->", lw=2, color='orange'))
+                                        arrowprops=dict(arrowstyle="<->", lw=2, color='red'))
             memory_analysis_ax.text(lds_buff_x[0]+ibuff_diff, lds_buff_y+lds_buff_height+ibuff_diff,
-                                    "LDS", color="white", fontsize=fontsize, ha='left')
+                                    "LDS", color="gray", fontsize=fontsize, ha='left')
             memory_analysis_ax.text(lds_buff_x[0]+ibuff_diff, lds_buff_y+lds_buff_height/2,
                                     f"Util: {agg_func(df['LDS Util'], Norm.PERC, duration, bw)}%", color="black", fontsize=fontsize, ha='left')
             memory_analysis_ax.text(exec_buff_x[1]+ibuff_diff, lds_buff_y+lds_buff_height/4,
-                                    f"Req: {agg_func(df['SQ_INSTS_LDS'], Norm.INSTS, duration, bw)}", color="white", fontsize=fontsize, ha='left')
+                                    f"Req: {agg_func(df['SQ_INSTS_LDS'], Norm.INSTS, duration, bw)}", color="gray", fontsize=fontsize, ha='left')
             lds_bytes = (
                 (df.get("SQ_LDS_IDX_ACTIVE") -
                  df.get("SQ_LDS_BANK_CONFLICT"))
@@ -1606,7 +1606,7 @@ def draw(
                 * 32
             )
             memory_analysis_ax.text(exec_buff_x[1]+ibuff_diff, lds_buff_y+lds_buff_height*3/4,
-                                    f"Total: {agg_func(lds_bytes, Norm.BYTES, duration, bw)}", color="white", fontsize=fontsize, ha='left')
+                                    f"Total: {agg_func(lds_bytes, Norm.BYTES, duration, bw)}", color="gray", fontsize=fontsize, ha='left')
             memory_analysis_ax.add_patch(lds_buff)
 
             vl1_cache_buff_width = lds_buff_width
@@ -1618,9 +1618,9 @@ def draw(
             )
             vl1_cache_buff_y = lds_buff_y - vl1_cache_buff_height/.7
             vl1_cache_buff = mpatches.Rectangle(
-                (vl1_cache_buff_x[0], vl1_cache_buff_y), vl1_cache_buff_width, vl1_cache_buff_height, edgecolor='orange', facecolor='white', lw=2)
+                (vl1_cache_buff_x[0], vl1_cache_buff_y), vl1_cache_buff_width, vl1_cache_buff_height, edgecolor='red', facecolor='gray', lw=2)
             memory_analysis_ax.text(vl1_cache_buff_x[0]+ibuff_diff, vl1_cache_buff_y+vl1_cache_buff_height+ibuff_diff,
-                                    f"Vector L1 Cache", color="white", fontsize=fontsize, ha='left')
+                                    f"Vector L1 Cache", color="gray", fontsize=fontsize, ha='left')
             memory_analysis_ax.text(vl1_cache_buff_x[0]+ibuff_diff, vl1_cache_buff_y+vl1_cache_buff_height*3/5,
                                     f"Hit: {agg_func(df['vL1D Hit Rate'], Norm.PERC, duration, bw)}%", color="black", fontsize=fontsize, ha='left')
             memory_analysis_ax.text(vl1_cache_buff_x[0]+ibuff_diff, vl1_cache_buff_y+vl1_cache_buff_height*4/5,
@@ -1637,9 +1637,9 @@ def draw(
                                             exec_buff_x[1],
                                             vl1_cache_buff_y + vl1_cache_buff_height*4/5
                                         ),
-                                        arrowprops=dict(arrowstyle="->", lw=2, color='orange'))
+                                        arrowprops=dict(arrowstyle="->", lw=2, color='red'))
             memory_analysis_ax.text(exec_buff_x[1]+ibuff_diff, vl1_cache_buff_y+vl1_cache_buff_height*4/5+ibuff_diff,
-                                    f"Bytes: {agg_func(bytes_from_l1, Norm.BYTES, duration, bw)}", color="white", fontsize=fontsize, ha='left')
+                                    f"Bytes: {agg_func(bytes_from_l1, Norm.BYTES, duration, bw)}", color="gray", fontsize=fontsize, ha='left')
 
             memory_analysis_ax.annotate("",
                                         xytext=(
@@ -1650,9 +1650,9 @@ def draw(
                                             vl1_cache_buff_x[0],
                                             vl1_cache_buff_y + vl1_cache_buff_height/2
                                         ),
-                                        arrowprops=dict(arrowstyle="->", lw=2, color='orange'))
+                                        arrowprops=dict(arrowstyle="->", lw=2, color='red'))
             memory_analysis_ax.text(exec_buff_x[1]+ibuff_diff, vl1_cache_buff_y+vl1_cache_buff_height/2+ibuff_diff,
-                                    f"Bytes: {agg_func(bytes_to_l1, Norm.BYTES, duration, bw)}", color="white", fontsize=fontsize, ha='left')
+                                    f"Bytes: {agg_func(bytes_to_l1, Norm.BYTES, duration, bw)}", color="gray", fontsize=fontsize, ha='left')
 
             memory_analysis_ax.annotate("",
                                         xytext=(
@@ -1663,9 +1663,9 @@ def draw(
                                             vl1_cache_buff_x[0],
                                             vl1_cache_buff_y + vl1_cache_buff_height/5
                                         ),
-                                        arrowprops=dict(arrowstyle="<->", lw=2, color='orange'))
+                                        arrowprops=dict(arrowstyle="<->", lw=2, color='red'))
             memory_analysis_ax.text(exec_buff_x[1]+ibuff_diff, vl1_cache_buff_y+vl1_cache_buff_height/5+ibuff_diff,
-                                    f"Atomic: {agg_func(df['TCP_TOTAL_ATOMIC_WITH_RET_sum'] + df['TCP_TOTAL_ATOMIC_WITHOUT_RET_sum'], Norm.INSTS, duration, bw)}", color="white", fontsize=fontsize, ha='left')
+                                    f"Atomic: {agg_func(df['TCP_TOTAL_ATOMIC_WITH_RET_sum'] + df['TCP_TOTAL_ATOMIC_WITHOUT_RET_sum'], Norm.INSTS, duration, bw)}", color="gray", fontsize=fontsize, ha='left')
 
             memory_analysis_ax.add_patch(vl1_cache_buff)
 
@@ -1678,9 +1678,9 @@ def draw(
             )
             sl1d_cache_buff_y = vl1_cache_buff_y - sl1d_cache_buff_height/.7
             sl1d_cache_buff = mpatches.Rectangle(
-                (sl1d_cache_buff_x[0], sl1d_cache_buff_y), sl1d_cache_buff_width, sl1d_cache_buff_height, edgecolor='orange', facecolor='white', lw=2)
+                (sl1d_cache_buff_x[0], sl1d_cache_buff_y), sl1d_cache_buff_width, sl1d_cache_buff_height, edgecolor='red', facecolor='gray', lw=2)
             memory_analysis_ax.text(sl1d_cache_buff_x[0]+ibuff_diff, sl1d_cache_buff_y+sl1d_cache_buff_height+ibuff_diff,
-                                    "Scalar L1D Cache", color="white", fontsize=fontsize, ha='left')
+                                    "Scalar L1D Cache", color="gray", fontsize=fontsize, ha='left')
             memory_analysis_ax.text(sl1d_cache_buff_x[0]+ibuff_diff, sl1d_cache_buff_y+sl1d_cache_buff_height*3/5,
                                     f"Hit: {agg_func(df['sL1D Hit Rate'], Norm.PERC, duration, bw)}%", color="black", fontsize=fontsize, ha='left')
             memory_analysis_ax.annotate("",
@@ -1692,9 +1692,9 @@ def draw(
                                             exec_buff_x[1],
                                             sl1d_cache_buff_y + sl1d_cache_buff_height/2
                                         ),
-                                        arrowprops=dict(arrowstyle="->", lw=2, color='orange'))
+                                        arrowprops=dict(arrowstyle="->", lw=2, color='red'))
             memory_analysis_ax.text(exec_buff_x[1]+ibuff_diff, sl1d_cache_buff_y+sl1d_cache_buff_height/2+ibuff_diff,
-                                    f"Rd: {agg_func(df['SQC_DCACHE_REQ'], Norm.INSTS, duration, bw)}", color="white", fontsize=fontsize, ha='left')
+                                    f"Rd: {agg_func(df['SQC_DCACHE_REQ'], Norm.INSTS, duration, bw)}", color="gray", fontsize=fontsize, ha='left')
 
             memory_analysis_ax.add_patch(sl1d_cache_buff)
 
@@ -1707,9 +1707,9 @@ def draw(
             )
             l1i_cache_buff_y = sl1d_cache_buff_y - l1i_cache_buff_height/.7
             l1i_cache_buff = mpatches.Rectangle(
-                (l1i_cache_buff_x[0], l1i_cache_buff_y), l1i_cache_buff_width, l1i_cache_buff_height, edgecolor='orange', facecolor='white', lw=2)
+                (l1i_cache_buff_x[0], l1i_cache_buff_y), l1i_cache_buff_width, l1i_cache_buff_height, edgecolor='red', facecolor='gray', lw=2)
             memory_analysis_ax.text(l1i_cache_buff_x[0]+ibuff_diff, l1i_cache_buff_y+l1i_cache_buff_height+ibuff_diff,
-                                    "Intr L1 Cache", color="white", fontsize=fontsize, ha='left')
+                                    "Intr L1 Cache", color="gray", fontsize=fontsize, ha='left')
             memory_analysis_ax.text(l1i_cache_buff_x[0]+ibuff_diff, l1i_cache_buff_y+l1i_cache_buff_height/2,
                                     f"Hit: {agg_func(df['L1I Hit Rate'], Norm.PERC, duration, bw)}%", color="black", fontsize=fontsize, ha='left')
             memory_analysis_ax.annotate("",
@@ -1722,7 +1722,7 @@ def draw(
                                             ibuff_diff*n_ibuff,
                                             l1i_cache_buff_y + l1i_cache_buff_height/2
                                         ),
-                                        arrowprops=dict(arrowstyle="-", lw=2, color='orange'))
+                                        arrowprops=dict(arrowstyle="-", lw=2, color='red'))
             memory_analysis_ax.annotate("",
                                         xytext=(
                                             ibuff_x[0] +
@@ -1735,9 +1735,9 @@ def draw(
                                             ibuff_y[0] -
                                             ibuff_diff*n_ibuff,
                                         ),
-                                        arrowprops=dict(arrowstyle="->", lw=2, color='orange'))
+                                        arrowprops=dict(arrowstyle="->", lw=2, color='red'))
             memory_analysis_ax.text(exec_buff_x[1]-ibuff_diff, l1i_cache_buff_y+l1i_cache_buff_height/2+ibuff_diff,
-                                    f"Fetch: {agg_func(df['SQC_ICACHE_REQ'], Norm.INSTS, duration, bw)}", color="white", fontsize=fontsize, ha='left')
+                                    f"Fetch: {agg_func(df['SQC_ICACHE_REQ'], Norm.INSTS, duration, bw)}", color="gray", fontsize=fontsize, ha='left')
 
             memory_analysis_ax.add_patch(l1i_cache_buff)
 
@@ -1751,9 +1751,9 @@ def draw(
             )
             l2_cache_buff_y = exec_buff_y[0] - l1i_cache_buff_height/.7
             l2_cache_buff = mpatches.Rectangle(
-                (l2_cache_buff_x[0], l2_cache_buff_y), l2_cache_buff_width, l2_cache_buff_height, edgecolor='orange', facecolor='black', lw=2)
+                (l2_cache_buff_x[0], l2_cache_buff_y), l2_cache_buff_width, l2_cache_buff_height, edgecolor='red', facecolor='black', lw=2)
             memory_analysis_ax.text(l2_cache_buff_x[0]+ibuff_diff, l2_cache_buff_y+l2_cache_buff_height+ibuff_diff,
-                                    "L2 Cache", color="white", fontsize=fontsize, ha='left')
+                                    "L2 Cache", color="gray", fontsize=fontsize, ha='left')
             memory_analysis_ax.add_patch(l2_cache_buff)
             bytes_from_l2 = (
                 df["TCP_TCC_ATOMIC_WITH_RET_REQ_sum"] * 64
@@ -1775,9 +1775,9 @@ def draw(
                                             vl1_cache_buff_x[1],
                                             vl1_cache_buff_y + vl1_cache_buff_height*2/5
                                         ),
-                                        arrowprops=dict(arrowstyle="->", lw=2, color='orange'))
+                                        arrowprops=dict(arrowstyle="->", lw=2, color='red'))
             memory_analysis_ax.text(vl1_cache_buff_x[1] + ibuff_diff, vl1_cache_buff_y+vl1_cache_buff_height*2/5+ibuff_diff,
-                                    f"Bytes: {agg_func(bytes_from_l2, Norm.BYTES, duration, bw)}", color="white", fontsize=fontsize, ha='left')
+                                    f"Bytes: {agg_func(bytes_from_l2, Norm.BYTES, duration, bw)}", color="gray", fontsize=fontsize, ha='left')
 
             memory_analysis_ax.annotate("",
                                         xytext=(
@@ -1788,9 +1788,9 @@ def draw(
                                             l2_cache_buff_x[0],
                                             vl1_cache_buff_y + vl1_cache_buff_height*4/5
                                         ),
-                                        arrowprops=dict(arrowstyle="->", lw=2, color='orange'))
+                                        arrowprops=dict(arrowstyle="->", lw=2, color='red'))
             memory_analysis_ax.text(vl1_cache_buff_x[1]+ibuff_diff, vl1_cache_buff_y+vl1_cache_buff_height*4/5+ibuff_diff,
-                                    f"Bytes: {agg_func(bytes_to_l2, Norm.BYTES, duration, bw)}", color="white", fontsize=fontsize, ha='left')
+                                    f"Bytes: {agg_func(bytes_to_l2, Norm.BYTES, duration, bw)}", color="gray", fontsize=fontsize, ha='left')
 
             memory_analysis_ax.annotate("",
                                         xytext=(
@@ -1801,9 +1801,9 @@ def draw(
                                             vl1_cache_buff_x[1],
                                             sl1d_cache_buff_y + sl1d_cache_buff_height*3/4
                                         ),
-                                        arrowprops=dict(arrowstyle="->", lw=2, color='orange'))
+                                        arrowprops=dict(arrowstyle="->", lw=2, color='red'))
             memory_analysis_ax.text(vl1_cache_buff_x[1]+ibuff_diff, sl1d_cache_buff_y+sl1d_cache_buff_height*3/4+ibuff_diff,
-                                    f"Rd: {agg_func(df['SQC_TC_DATA_READ_REQ'], Norm.INSTS, duration, bw)}", color="white", fontsize=fontsize, ha='left')
+                                    f"Rd: {agg_func(df['SQC_TC_DATA_READ_REQ'], Norm.INSTS, duration, bw)}", color="gray", fontsize=fontsize, ha='left')
             memory_analysis_ax.annotate("",
                                         xytext=(
                                             vl1_cache_buff_x[1],
@@ -1813,9 +1813,9 @@ def draw(
                                             l2_cache_buff_x[0],
                                             sl1d_cache_buff_y + sl1d_cache_buff_height/2
                                         ),
-                                        arrowprops=dict(arrowstyle="->", lw=2, color='orange'))
+                                        arrowprops=dict(arrowstyle="->", lw=2, color='red'))
             memory_analysis_ax.text(vl1_cache_buff_x[1]+ibuff_diff, sl1d_cache_buff_y+sl1d_cache_buff_height/2+ibuff_diff,
-                                    f"Wr: {agg_func(df['SQC_TC_DATA_WRITE_REQ'], Norm.INSTS, duration, bw)}", color="white", fontsize=fontsize, ha='left')
+                                    f"Wr: {agg_func(df['SQC_TC_DATA_WRITE_REQ'], Norm.INSTS, duration, bw)}", color="gray", fontsize=fontsize, ha='left')
             memory_analysis_ax.annotate("",
                                         xytext=(
                                             l2_cache_buff_x[0],
@@ -1825,9 +1825,9 @@ def draw(
                                             vl1_cache_buff_x[1],
                                             sl1d_cache_buff_y + sl1d_cache_buff_height/4
                                         ),
-                                        arrowprops=dict(arrowstyle="<->", lw=2, color='orange'))
+                                        arrowprops=dict(arrowstyle="<->", lw=2, color='red'))
             memory_analysis_ax.text(vl1_cache_buff_x[1]+ibuff_diff, sl1d_cache_buff_y+sl1d_cache_buff_height/4+ibuff_diff,
-                                    f"Atomic: {agg_func(df['SQC_TC_DATA_ATOMIC_REQ'], Norm.INSTS, duration, bw)}", color="white", fontsize=fontsize, ha='left')
+                                    f"Atomic: {agg_func(df['SQC_TC_DATA_ATOMIC_REQ'], Norm.INSTS, duration, bw)}", color="gray", fontsize=fontsize, ha='left')
 
             memory_analysis_ax.annotate("",
                                         xytext=(
@@ -1838,20 +1838,20 @@ def draw(
                                             vl1_cache_buff_x[1],
                                             l1i_cache_buff_y + l1i_cache_buff_height/2
                                         ),
-                                        arrowprops=dict(arrowstyle="->", lw=2, color='orange'))
+                                        arrowprops=dict(arrowstyle="->", lw=2, color='red'))
             memory_analysis_ax.text(vl1_cache_buff_x[1]+ibuff_diff, l1i_cache_buff_y+l1i_cache_buff_height/2+ibuff_diff,
-                                    f"Fetch: {agg_func(df['SQC_TC_INST_REQ'], Norm.INSTS, duration, bw)}", color="white", fontsize=fontsize, ha='left')
+                                    f"Fetch: {agg_func(df['SQC_TC_INST_REQ'], Norm.INSTS, duration, bw)}", color="gray", fontsize=fontsize, ha='left')
 
             memory_analysis_ax.text(l2_cache_buff_x[0]+ibuff_diff, l2_cache_buff_y+l2_cache_buff_height*3/10,
-                                    f"Rd: {agg_func(df['TCC_READ_sum'], Norm.INSTS, duration, bw)}", color="white", fontsize=fontsize, ha='left')
+                                    f"Rd: {agg_func(df['TCC_READ_sum'], Norm.INSTS, duration, bw)}", color="gray", fontsize=fontsize, ha='left')
             memory_analysis_ax.text(l2_cache_buff_x[0]+ibuff_diff, l2_cache_buff_y+l2_cache_buff_height*4/10,
-                                    f"Wr: {agg_func(df['TCC_WRITE_sum'], Norm.INSTS, duration, bw)}", color="white", fontsize=fontsize, ha='left')
+                                    f"Wr: {agg_func(df['TCC_WRITE_sum'], Norm.INSTS, duration, bw)}", color="gray", fontsize=fontsize, ha='left')
             memory_analysis_ax.text(l2_cache_buff_x[0]+ibuff_diff, l2_cache_buff_y+l2_cache_buff_height*5/10,
-                                    f"Atomic: {agg_func(df['TCC_ATOMIC_sum'], Norm.INSTS, duration, bw)}", color="white", fontsize=fontsize, ha='left')
+                                    f"Atomic: {agg_func(df['TCC_ATOMIC_sum'], Norm.INSTS, duration, bw)}", color="gray", fontsize=fontsize, ha='left')
             memory_analysis_ax.text(l2_cache_buff_x[0]+ibuff_diff, l2_cache_buff_y+l2_cache_buff_height*6/10,
-                                    f"Hit: {agg_func(df['L2 Hit Rate'], Norm.PERC, duration, bw)}%", color="white", fontsize=fontsize, ha='left')
+                                    f"Hit: {agg_func(df['L2 Hit Rate'], Norm.PERC, duration, bw)}%", color="gray", fontsize=fontsize, ha='left')
             memory_analysis_ax.text(l2_cache_buff_x[0]+ibuff_diff, l2_cache_buff_y+l2_cache_buff_height*7/10,
-                                    f"Util: {agg_func(df['L2 Util'], Norm.PERC, duration, bw)}%", color="white", fontsize=fontsize, ha='left')
+                                    f"Util: {agg_func(df['L2 Util'], Norm.PERC, duration, bw)}%", color="gray", fontsize=fontsize, ha='left')
 
             # to fabric arrows
             fabric_width = exec_buff_width
@@ -1862,13 +1862,13 @@ def draw(
             )
             fabric_y = l2_cache_buff_y + fabric_height / 2
             fabric = mpatches.Rectangle(
-                (fabric_x[0], fabric_y), fabric_width, fabric_height, edgecolor='orange', facecolor='black', lw=2)
+                (fabric_x[0], fabric_y), fabric_width, fabric_height, edgecolor='red', facecolor='black', lw=2)
             memory_analysis_ax.text(fabric_x[0]+ibuff_diff, fabric_y+fabric_height+ibuff_diff,
-                                    "Fabric", color="white", fontsize=fontsize, ha='left')
+                                    "Fabric", color="gray", fontsize=fontsize, ha='left')
             fabric_util = (df.get("L2 Fabric Read Bandwidth Percent of Peak") +
                            df.get("L2 Fabric Write&Atomic Bandwidth Percent of Peak"))
             memory_analysis_ax.text(fabric_x[0]+ibuff_diff, fabric_y+fabric_height/2+ibuff_diff,
-                                    f"Util: {agg_func(fabric_util, Norm.PERC, duration, bw)}%", color="white", fontsize=fontsize, ha='left')
+                                    f"Util: {agg_func(fabric_util, Norm.PERC, duration, bw)}%", color="gray", fontsize=fontsize, ha='left')
             memory_analysis_ax.add_patch(fabric)
             bytes_to_fabric = (
                 (df["TCC_EA0_WRREQ_64B_sum"] * 64)
@@ -1887,9 +1887,9 @@ def draw(
                                             l2_cache_buff_x[1],
                                             fabric_y + fabric_height*3/4
                                         ),
-                                        arrowprops=dict(arrowstyle="->", lw=2, color='orange'))
+                                        arrowprops=dict(arrowstyle="->", lw=2, color='red'))
             memory_analysis_ax.text(l2_cache_buff_x[1]+ibuff_diff, fabric_y + fabric_height*3/4+ibuff_diff,
-                                    f"Bytes: {agg_func(bytes_from_fabric, Norm.BYTES, duration, bw)}", color="white", fontsize=fontsize, ha='left')
+                                    f"Bytes: {agg_func(bytes_from_fabric, Norm.BYTES, duration, bw)}", color="gray", fontsize=fontsize, ha='left')
 
             memory_analysis_ax.annotate("",
                                         xytext=(
@@ -1900,9 +1900,9 @@ def draw(
                                             fabric_x[0],
                                             fabric_y + fabric_height/2
                                         ),
-                                        arrowprops=dict(arrowstyle="->", lw=2, color='orange'))
+                                        arrowprops=dict(arrowstyle="->", lw=2, color='red'))
             memory_analysis_ax.text(l2_cache_buff_x[1]+ibuff_diff, fabric_y + fabric_height/2+ibuff_diff,
-                                    f"Bytes: {agg_func(bytes_to_fabric, Norm.BYTES, duration, bw)}", color="white", fontsize=fontsize, ha='left')
+                                    f"Bytes: {agg_func(bytes_to_fabric, Norm.BYTES, duration, bw)}", color="gray", fontsize=fontsize, ha='left')
 
             memory_analysis_ax.annotate("",
                                         xytext=(
@@ -1913,9 +1913,9 @@ def draw(
                                             fabric_x[0],
                                             fabric_y + fabric_height/4
                                         ),
-                                        arrowprops=dict(arrowstyle="<->", lw=2, color='orange'))
+                                        arrowprops=dict(arrowstyle="<->", lw=2, color='red'))
             memory_analysis_ax.text(l2_cache_buff_x[1]+ibuff_diff, fabric_y + fabric_height/4+ibuff_diff,
-                                    f"Atomic: {agg_func(df['TCC_EA0_ATOMIC_sum'], Norm.INSTS, duration, bw)}", color="white", fontsize=fontsize, ha='left')
+                                    f"Atomic: {agg_func(df['TCC_EA0_ATOMIC_sum'], Norm.INSTS, duration, bw)}", color="gray", fontsize=fontsize, ha='left')
 
             hbm_width = exec_buff_width
             hbm_height = fabric_height / 2
@@ -1925,9 +1925,9 @@ def draw(
             )
             hbm_y = fabric_y + hbm_height / 2
             hbm = mpatches.Rectangle(
-                (hbm_x[0], hbm_y), hbm_width, hbm_height, edgecolor='orange', facecolor='black', lw=2)
+                (hbm_x[0], hbm_y), hbm_width, hbm_height, edgecolor='red', facecolor='black', lw=2)
             memory_analysis_ax.text(hbm_x[0]+ibuff_diff, hbm_y+hbm_height+ibuff_diff,
-                                    "HBM", color="white", fontsize=fontsize, ha='left')
+                                    "HBM", color="gray", fontsize=fontsize, ha='left')
             memory_analysis_ax.add_patch(hbm)
 
             memory_analysis_ax.annotate("",
@@ -1939,13 +1939,13 @@ def draw(
                                             fabric_x[1],
                                             hbm_y + hbm_height*2/3
                                         ),
-                                        arrowprops=dict(arrowstyle="->", lw=2, color='orange'))
+                                        arrowprops=dict(arrowstyle="->", lw=2, color='red'))
 
             reqs_to_hbm = df.get("TCC_EA0_WRREQ_DRAM_sum")
             reqs_from_hbm = df.get("TCC_EA0_RDREQ_DRAM_sum")
 
             memory_analysis_ax.text(fabric_x[1]+ibuff_diff, hbm_y + hbm_height*2/3+ibuff_diff,
-                                    f"Req: {agg_func(reqs_from_hbm, Norm.INSTS, duration, bw)}", color="white", fontsize=fontsize, ha='left')
+                                    f"Req: {agg_func(reqs_from_hbm, Norm.INSTS, duration, bw)}", color="gray", fontsize=fontsize, ha='left')
 
             memory_analysis_ax.annotate("",
                                         xytext=(
@@ -1956,13 +1956,13 @@ def draw(
                                             hbm_x[0],
                                             hbm_y + hbm_height/3
                                         ),
-                                        arrowprops=dict(arrowstyle="->", lw=2, color='orange'))
+                                        arrowprops=dict(arrowstyle="->", lw=2, color='red'))
             memory_analysis_ax.text(fabric_x[1]+ibuff_diff, hbm_y + hbm_height/3+ibuff_diff,
-                                    f"Req: {agg_func(reqs_to_hbm, Norm.INSTS, duration, bw)}", color="white", fontsize=fontsize, ha='left')
+                                    f"Req: {agg_func(reqs_to_hbm, Norm.INSTS, duration, bw)}", color="gray", fontsize=fontsize, ha='left')
 
         if i == n_ibuff-1:
             memory_analysis_ax.text(ibuff_x[0]+ibuff_width/8, ibuff_y[0]+ibuff_height*.75,
-                                    "Instr Buff", color='white', fontsize=fontsize, ha='left')
+                                    "Instr Buff", color='gray', fontsize=fontsize, ha='left')
         else:
             ibuff_x = (ibuff_x[0]-ibuff_diff, ibuff_x[1]-ibuff_diff)
             ibuff_y = (ibuff_y[0]-ibuff_diff, ibuff_y[1]-ibuff_diff)

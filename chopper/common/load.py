@@ -2,6 +2,9 @@ import pandas as pd
 from typing import Optional, List, Dict, Tuple
 import chopper
 
+# framework: Framework = Framework.FSDPv1
+from chopper.common.annotations import Framework
+
 
 def select_iters(df: pd.DataFrame, iters: List) -> pd.DataFrame:
     u_iters = df.loc[~df['iteration'].isna(), 'iteration'].unique()
@@ -20,7 +23,7 @@ def get_df(
     group_arr: Optional[List] = None,
     group_map: Optional[Dict[str, Tuple[str, str]]] = None,
     sort_value: Optional[str] = None,
-    fsdp_v2: bool = False,
+    framework: Framework = Framework.FSDPv1,
 ) -> pd.DataFrame:
     df = pd.read_pickle(fn)
     df['layer'] = df['layer'].fillna(-1)
@@ -30,7 +33,8 @@ def get_df(
         df = select_iters(df, iter_idxs)
 
     if remove_overlap:
-        df = df[chopper.common.annotations.no_overlap_mask(df, fsdp_v2=fsdp_v2)]
+        df = df[chopper.common.annotations.no_overlap_mask(
+            df, framework=framework)]
     if assign_optype:
         df = chopper.common.annotations.assign_operator_type(df)
 
@@ -84,7 +88,7 @@ def get_straggler_df(
     fn: str,
     iter_idxs: Optional[List] = None,
     agg_meth: str = 'max',
-    fsdp_v2: bool = False,
+    framework: Framework = Framework.FSDPv1,
     kernel_name: bool = False,
 ) -> pd.DataFrame:
     group_arr = ['iteration', 'layer', 'operator-name',
@@ -102,7 +106,7 @@ def get_straggler_df(
             'dur': ['sum', 'last'],
         },
         sort_value='ts_first',
-        fsdp_v2=fsdp_v2,
+        framework=framework,
     )
     agg_df = df.groupby(
         group_arr,
@@ -145,7 +149,7 @@ def get_straggler_contributors(
 def get_overlap_df(
     fn: str,
     iter_idxs: Optional[List] = None,
-    fsdp_v2: bool = False,
+    framework: Framework = Framework.FSDPv1,
     kernel_name: bool = False,
     include_comm_df: bool = False,
 ):
@@ -154,7 +158,8 @@ def get_overlap_df(
         iter_idxs=iter_idxs,
         sort_value='ts',
     )
-    comm_df = comm_df[~chopper.common.annotations.no_overlap_mask(comm_df, fsdp_v2=fsdp_v2)]
+    comm_df = comm_df[~chopper.common.annotations.no_overlap_mask(
+        comm_df, framework=framework)]
     comm_df['end_ts'] = comm_df['ts'] + comm_df['dur']
 
     comp_df = get_df(
@@ -171,7 +176,7 @@ def get_overlap_df(
             'dur': ['sum', 'last'],
         },
         sort_value='ts_first',
-        fsdp_v2=fsdp_v2,
+        framework=framework,
     )
     comp_df['end_ts'] = comp_df['ts_last'] + comp_df['dur_last']
     comp_df['elapsed'] = comp_df['end_ts'] - comp_df['ts_first']
@@ -211,7 +216,7 @@ def get_overlap_df(
 def get_slack_adv_df(
     fn: str,
     iter_idxs: Optional[List] = None,
-    fsdp_v2: bool = False,
+    framework: Framework = Framework.FSDPv1,
     kernel_name: bool = False,
     agg_meth: str = 'max',
 ):
@@ -226,9 +231,10 @@ def get_slack_adv_df(
             'dur': ['sum', 'last'],
         },
         sort_value='ts_first',
-        fsdp_v2=fsdp_v2,
+        framework=framework,
     )
-    comm_df = comm_df[~chopper.common.annotations.no_overlap_mask(comm_df, fsdp_v2=fsdp_v2)]
+    comm_df = comm_df[~chopper.common.annotations.no_overlap_mask(
+        comm_df, framework=framework)]
     comm_df = comm_df[comm_df['name'] != 'Memcpy HtoD (Host -> Device)']
     comm_df['end_ts'] = comm_df['ts_last'] + comm_df['dur']
     comm_df['elapsed'] = comm_df['end_ts'] - comm_df['ts_first']
@@ -246,7 +252,7 @@ def get_slack_adv_df(
             'dur': ['sum', 'last'],
         },
         sort_value='ts_first',
-        fsdp_v2=fsdp_v2,
+        framework=framework,
     )
     comp_df['end_ts'] = comp_df['ts_last'] + comp_df['dur_last']
     comp_df['elapsed'] = comp_df['end_ts'] - comp_df['ts_first']

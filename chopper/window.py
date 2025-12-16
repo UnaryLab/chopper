@@ -198,6 +198,30 @@ class StrSelection(QWidget):
         return self.name, self.item.text()
 
 
+class IntSelection(QWidget):
+    def __init__(self, integer: int, name: str, ann, parent=None):
+        super().__init__(parent)
+
+        self.name = name
+        self.ann = ann
+        self.list = QListWidget()
+        self.list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
+
+        self.item = QListWidgetItem()
+        self.item.setFlags(self.item.flags() | Qt.ItemFlag.ItemIsEditable)
+        self.item.setData(Qt.ItemDataRole.EditRole, integer)
+        self.list.addItem(self.item)
+
+        layout = QVBoxLayout()
+        layout.addWidget(QLabel(f'{self.name}: {self.ann}'))
+        layout.addWidget(self.list)
+        self.setLayout(layout)
+
+    def get_selections(self):
+        return self.name, self.item.data(Qt.ItemDataRole.EditRole)
+
+
 class SelectionType(enum.Enum):
     plot = enum.auto()
     data = enum.auto()
@@ -387,6 +411,9 @@ class MatplotlibWidget(QWidget):
             elif ann == inspect.formatannotation(str):
                 self.selections.add_selection(
                     StrSelection(cache_vals, name, ann), SelectionType.data)
+            elif ann == inspect.formatannotation(int):
+                self.selections.add_selection(
+                    IntSelection(cache_vals, name, ann), SelectionType.data)
             else:
                 raise TypeError(f"Unknown annotation: {ann}")
 
@@ -412,6 +439,9 @@ class MatplotlibWidget(QWidget):
             elif ann == inspect.formatannotation(str):
                 self.selections.add_selection(
                     StrSelection(cache_vals, name, ann), SelectionType.draw)
+            elif ann == inspect.formatannotation(int):
+                self.selections.add_selection(
+                    IntSelection(cache_vals, name, ann), SelectionType.draw)
             else:
                 raise TypeError(f"Unknown annotation: {ann}")
 
