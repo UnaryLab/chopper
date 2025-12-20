@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 from chopper.common.load import get_straggler_df
 from chopper.common.colors import okabe_ito
 from chopper.common.printing import info
@@ -244,7 +242,3 @@ def draw(
         handlelength=0.5,
         frameon=False,
     )
-
-
-if __name__ == "__main__":
-    draw()
