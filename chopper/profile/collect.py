@@ -1,49 +1,39 @@
 from argparse import ArgumentParser
-import subprocess
-from math import ceil
-from pathlib import Path
+from chopper.profile import telemetry
+from chopper.profile.runner import Runner
 
 
-def main(counters, nvidia, outdir, program):
-    assert nvidia is False, "NVIDIA is not supported currently"
-    prof_exe = 'rocprofv3'
-    if outdir is None:
-        outdir = Path.cwd()
-    else:
-        outdir = Path(outdir)
-
-    n_counters = len(counters)
-    leading_zeros = len(str(n_counters))
-
-    # run up to three counters at a time
-    # TODO make custom
-    citers = ceil(n_counters / 3)
-    for citer in range(citers):
-        iter_counters = counters[citer*3:(citer+1)*3]
-        dir_num = str(citer).zfill(leading_zeros)
-        counter_dir = outdir / f'chopper_counters{dir_num}'
-        proc_args = (
-            prof_exe,
-            '--pmc',
-            ','.join(iter_counters),
-            '-d',
-            str(counter_dir.resolve()),
-            '--',
-            *program
+def main(counters, nvidia, cpu_telemetry, gpu_telemetry, outdir, program):
+    with Runner() as runner:
+        if cpu_telemetry:
+            runner.add(
+                telemetry.cpu.main,
+                outdir=outdir,
+            )
+        if gpu_telemetry:
+            runner.add(
+                telemetry.gpu.main,
+                nvidia=nvidia,
+                outdir=outdir,
+            )
+        runner.add(
+            telemetry.counters,
+            program,
+            counters,
+            outdir,
+            nvidia,
         )
-        subprocess.run(
-            proc_args,
-            check=True,
-        )
+        runner.start()
 
 
 if __name__ == "__main__":
     parser = ArgumentParser(
-        usage='pass program to run and performance counters to collect')
+        usage='pass program to run and what to collect (i.e., hardware counters, CPU and GPU telemetry)',
+    )
     parser.add_argument(
         '--counters',
         nargs='+',
-        required=True,
+        required=False,
         help='Name of hardware counters to collect'
     )
     parser.add_argument(
@@ -51,6 +41,18 @@ if __name__ == "__main__":
         action='store_true',
         required=False,
         help='Not supported currently'
+    )
+    parser.add_argument(
+        '--cpu-telemetry',
+        action='store_true',
+        required=False,
+        help='collect CPU telemetry'
+    )
+    parser.add_argument(
+        '--gpu-telemetry',
+        action='store_true',
+        required=False,
+        help='collect GPU telemetry'
     )
     parser.add_argument(
         '--out-dir',
@@ -63,4 +65,11 @@ if __name__ == "__main__":
         help='program to run'
     )
     args = parser.parse_args()
-    main(args.counters, args.nvidia, args.out_dir, args.program)
+    main(
+        args.counters,
+        args.nvidia,
+        args.cpu_telemetry,
+        args.cpu_telemetry,
+        args.out_dir,
+        args.program,
+    )
