@@ -49,5 +49,3 @@ def main(
             program,
             check=True,
         )
-    info("Program finished executing, stopping telemetry...")
-    stop.value = True

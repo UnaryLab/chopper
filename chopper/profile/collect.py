@@ -4,26 +4,31 @@ from chopper.profile.runner import Runner
 
 
 def main(counters, nvidia, cpu_telemetry, gpu_telemetry, outdir, program):
-    with Runner() as runner:
-        if cpu_telemetry:
-            runner.add(
-                telemetry.cpu.main,
-                outdir=outdir,
-            )
-        if gpu_telemetry:
-            runner.add(
-                telemetry.gpu.main,
-                nvidia=nvidia,
-                outdir=outdir,
-            )
+    runner = Runner()
+
+    if cpu_telemetry:
         runner.add(
-            telemetry.counters.main,
-            program,
-            counters,
-            outdir,
-            nvidia,
+            telemetry.cpu.main,
+            False,
+            outdir=outdir,
         )
-        runner.start()
+    if gpu_telemetry:
+        runner.add(
+            telemetry.gpu.main,
+            False,
+            nvidia=nvidia,
+            outdir=outdir,
+        )
+    runner.add(
+        telemetry.counters.main,
+        True,
+        program,
+        counters,
+        outdir,
+        nvidia,
+    )
+    runner.start()
+    runner.join()
 
 
 if __name__ == "__main__":
