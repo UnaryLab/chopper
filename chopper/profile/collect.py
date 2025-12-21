@@ -17,7 +17,7 @@ def main(counters, nvidia, cpu_telemetry, gpu_telemetry, outdir, program):
                 outdir=outdir,
             )
         runner.add(
-            telemetry.counters,
+            telemetry.counters.main,
             program,
             counters,
             outdir,
