@@ -2,7 +2,6 @@ import pandas as pd
 from typing import Optional, List, Dict, Tuple
 import chopper
 
-# framework: Framework = Framework.FSDPv1
 from chopper.common.annotations import Framework
 
 
