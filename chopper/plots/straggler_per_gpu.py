@@ -10,21 +10,15 @@ from chopper.common.annotations import Framework
 
 def get_data(
         dirs: Tuple[str] = (
-            'nvidia',
+            '.',
         ),
         variants: Tuple[str] = (
             'nvidia',
         ),
-        idx_start: int = -1,
-        idx_end: int = -1,
-        idx_step: int = 1,
-
 ):
 
     dfs = tuple(
         get_straggler_df(f'{d}/ts.pkl',
-                         iter_idxs=range(idx_start, idx_end, idx_step) if (
-                             idx_start != -1 and idx_end != -1) else None,
                          agg_meth='max',
                          framework=Framework.FSDPv2,
                          kernel_name=True)
@@ -36,7 +30,10 @@ def get_data(
 def draw(
     fig: Figure,
     input_data,
-    n_gpus: int = 8,  # hardcode for now
+    n_gpus: int = 8,
+    idx_start: int = 0,
+    idx_end: int = -1,
+
 ):
 
     dfs, variants = input_data
@@ -55,27 +52,27 @@ def draw(
     gymin0 = gymax0 = 0
     max_lead = 0
     for i, (variant, df) in enumerate(zip(variants, dfs)):
-        gpus = sorted(df['gpu'].unique())
-        iters = sorted(df['iteration'].unique())
-
-        for gpu in gpus:
+        for gpu in range(n_gpus):
             gpu_slot = tmp_df.setdefault(variant, {})
             ax = axs[i][gpu]
-            tmp_df_ = df[df['gpu'] == gpu].reset_index(
+            iters = sorted(df['iteration'].unique())
+            tmp_df_ = df[
+                (df['gpu'] == gpu) &
+                (df['iteration'].isin(iters[idx_start:idx_end]))
+            ].reset_index(
                 drop=True).reset_index()
 
             max_lead = max(max_lead, tmp_df_['s-value'].max())
             gpu_slot[gpu] = tmp_df_
 
-    for i, (variant, df) in enumerate(zip(variants, dfs)):
-        gpus = sorted(df['gpu'].unique())
-        iters = sorted(df['iteration'].unique())
-        print(iters)
-        for gpu in gpus:
+    for i, variant in enumerate(variants):
+        for gpu in range(n_gpus):
             ax = axs[i][gpu]
             ax.yaxis.set_major_locator(MaxNLocator(nbins=3))
             ax.grid(axis="y", linestyle='--', alpha=.5)
             tmp_df_ = tmp_df[variant][gpu]
+            iters = sorted(tmp_df_['iteration'].unique())
+            print(iters)
             assert tmp_df_['ts_first'].is_monotonic_increasing
             iter_agg = tmp_df_.groupby('iteration')['index'].agg(
                 ['min', 'median', 'max'])
@@ -112,7 +109,7 @@ def draw(
                     fontsize=8,
                 )
 
-        for gpu in gpus:
+        for gpu in range(n_gpus):
             axs[i][gpu].set_ylim((gymin0, gymax0))
 
         axs[n_rows-1][n_cols//2].set_xlabel("kernel sample")
