@@ -30,13 +30,19 @@ def get_data(
 def draw(
     fig: Figure,
     input_data,
-    n_gpus: int = 8,
     idx_start: int = 0,
     idx_end: int = -1,
 
 ):
 
     dfs, variants = input_data
+
+    n_gpus = None
+    for df in dfs:
+        if n_gpus is None:
+            n_gpus = df['gpu'].nunique()
+        else:
+            assert n_gpus == df['gpu'].nunique(), "number of GPUs don't match"
 
     n_rows = len(variants)
     n_cols = n_gpus
@@ -72,7 +78,6 @@ def draw(
             ax.grid(axis="y", linestyle='--', alpha=.5)
             tmp_df_ = tmp_df[variant][gpu]
             iters = sorted(tmp_df_['iteration'].unique())
-            print(iters)
             assert tmp_df_['ts_first'].is_monotonic_increasing
             iter_agg = tmp_df_.groupby('iteration')['index'].agg(
                 ['min', 'median', 'max'])
