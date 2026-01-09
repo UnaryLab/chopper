@@ -12,7 +12,7 @@ def select_iters(df: pd.DataFrame, iters: List) -> pd.DataFrame:
 
 
 def get_df(
-    fn: str,
+    fn: str | pd.DataFrame,
     iter_idxs: Optional[List] = None,
     assign_chunks: bool = False,
     assign_optype: bool = False,
@@ -24,7 +24,12 @@ def get_df(
     sort_value: Optional[str] = None,
     framework: Framework = Framework.FSDPv1,
 ) -> pd.DataFrame:
-    df = pd.read_pickle(fn)
+    if isinstance(fn, pd.DataFrame):
+        df = fn.copy()
+    elif isinstance(fn, str):
+        df = pd.read_pickle(fn)
+    else:
+        raise ValueError(f"{fn} was a {type(fn)}")
     df['layer'] = df['layer'].fillna(-1)
     df = df[df['name'] != 'Memcpy HtoD (Host -> Device)']
 
@@ -84,7 +89,7 @@ def get_df(
 
 
 def get_straggler_df(
-    fn: str,
+    fn: str | pd.DataFrame,
     iter_idxs: Optional[List] = None,
     agg_meth: str = 'max',
     framework: Framework = Framework.FSDPv1,
@@ -146,7 +151,7 @@ def get_straggler_contributors(
 
 
 def get_overlap_df(
-    fn: str,
+    fn: str | pd.DataFrame,
     iter_idxs: Optional[List] = None,
     framework: Framework = Framework.FSDPv1,
     kernel_name: bool = False,
@@ -213,7 +218,7 @@ def get_overlap_df(
 
 
 def get_slack_adv_df(
-    fn: str,
+    fn: str | pd.DataFrame,
     iter_idxs: Optional[List] = None,
     framework: Framework = Framework.FSDPv1,
     kernel_name: bool = False,
