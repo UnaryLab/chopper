@@ -14,7 +14,7 @@ from time import sleep
 def _main(
     stop,
     filename,
-    output_dir,
+    outdir,
     on,
     off,
 ):
@@ -28,7 +28,7 @@ def _main(
         results = []
 
         pause_ts = monotonic_ns() + int(on * 1e9)
-        while not stop:
+        while not stop.value:
             for gpu, device in gpu_map.items():
                 ts = monotonic_ns()
                 result = amdsmi_get_gpu_metrics_info(device)
@@ -40,24 +40,24 @@ def _main(
                 pause_ts = monotonic_ns() + int(on * 1e9)
 
         df = pd.DataFrame(results)
-        df.to_pickle(f"{output_dir}/{filename}")
+        df.to_pickle(f"{outdir}/{filename}")
     except AmdSmiException as e:
         print(e)
 
 
 def main(
     stop: bool,
-    filename: str = 'metric_samples.pkl',
+    filename: str = 'gpu.pkl',
     nvidia: bool = False,
-    output_dir: str = '.',
-    on: float = 1.0,
-    off: float = 0.0,
+    outdir: str = '.',
+    on: float = 0.0,
+    off: float = 0.1,
 ):
     assert nvidia is False, "NVIDIA GPU telemetry is not supported currently"
     # TODO change for nvidia
     try:
         amdsmi_init()
-        _main(filename, output_dir, on, off)
+        _main(stop, filename, outdir, on, off)
         amdsmi_shut_down()
     except AmdSmiException as e:
         print(e)

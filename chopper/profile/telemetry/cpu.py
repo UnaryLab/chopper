@@ -10,6 +10,7 @@ def main(
     outdir: str = '.',
     on: float = 0.0,
     off: float = 0.1,
+    **kwargs,
 ):
     assert hasattr(psutil.Process, "cpu_num"), "not supported"
 
@@ -18,7 +19,7 @@ def main(
     results = []
     pause_ts = monotonic_ns() + int(on * 1e9)
 
-    while not stop:
+    while not stop.value:
         ts = monotonic_ns()
         cpu_entries = {}
         cpus_percent = psutil.cpu_percent(percpu=True)

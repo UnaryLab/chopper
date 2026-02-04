@@ -1,29 +1,33 @@
 from argparse import ArgumentParser
-from chopper.profile import telemetry
+from chopper.profile.telemetry import cpu, gpu, counters
 from chopper.profile.runner import Runner
 
 
-def main(counters, nvidia, cpu_telemetry, gpu_telemetry, outdir, program):
+def main(counter_names, nvidia, cpu_telemetry, gpu_telemetry, outdir, program):
+    if len(program) == 0:
+        print("Please pass a program to run")
+        return -1
+
     runner = Runner()
 
     if cpu_telemetry:
         runner.add(
-            telemetry.cpu.main,
+            cpu.main,
             False,
             outdir=outdir,
         )
     if gpu_telemetry:
         runner.add(
-            telemetry.gpu.main,
+            gpu.main,
             False,
             nvidia=nvidia,
             outdir=outdir,
         )
     runner.add(
-        telemetry.counters.main,
+        counters.main,
         True,
         program,
-        counters,
+        counter_names,
         outdir,
         nvidia,
     )
@@ -62,19 +66,20 @@ if __name__ == "__main__":
     parser.add_argument(
         '--out-dir',
         required=False,
+        default=".",
         help='directory to put counters'
     )
     parser.add_argument(
         'program',
         nargs='*',
-        help='program to run'
+        help='program to run',
     )
     args = parser.parse_args()
-    main(
+    exit(main(
         args.counters,
         args.nvidia,
         args.cpu_telemetry,
-        args.cpu_telemetry,
+        args.gpu_telemetry,
         args.out_dir,
         args.program,
-    )
+    ))
