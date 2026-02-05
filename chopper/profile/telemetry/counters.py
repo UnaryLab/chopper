@@ -7,15 +7,25 @@ from chopper.common.printing import info
 def main(
     stop: bool,
     program,
-    counters,
+    counter_names,
     outdir,
+    container,
     nvidia,
 ):
     assert nvidia is False, "NVIDIA counters are not supported currently"
     prof_exe = 'rocprofv3'  # TODO change for nvidia
 
-    if counters is not None:
-        n_counters = len(counters)
+    container_args = []
+    if container is not None and container.endswith(".sif"):
+        container_args.extend((
+                              "apptainer",
+                              "exec",
+                              "--rocm",
+                              container,
+                              ))
+
+    if counter_names is not None:
+        n_counters = len(counter_names)
         assert n_counters > 0
         leading_zeros = len(str(n_counters))
 
@@ -28,10 +38,11 @@ def main(
         # TODO make custom
         citers = ceil(n_counters / 3)
         for citer in range(citers):
-            iter_counters = counters[citer*3:(citer+1)*3]
+            iter_counters = counter_names[citer*3:(citer+1)*3]
             dir_num = str(citer).zfill(leading_zeros)
             counter_dir = outdir / f'chopper_counters{dir_num}'
             proc_args = (
+                *container_args,
                 prof_exe,
                 '--pmc',
                 ','.join(iter_counters),
@@ -46,6 +57,9 @@ def main(
             )
     else:
         subprocess.run(
-            program,
+            (
+                *container_args,
+                *program,
+            ),
             check=True,
         )

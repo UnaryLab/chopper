@@ -3,7 +3,13 @@ from chopper.profile.telemetry import cpu, gpu, counters
 from chopper.profile.runner import Runner
 
 
-def main(counter_names, nvidia, cpu_telemetry, gpu_telemetry, outdir, program):
+def main(program,
+         counter_names,
+         outdir,
+         container,
+         nvidia,
+         cpu_telemetry,
+         gpu_telemetry):
     if len(program) == 0:
         print("Please pass a program to run")
         return -1
@@ -29,6 +35,7 @@ def main(counter_names, nvidia, cpu_telemetry, gpu_telemetry, outdir, program):
         program,
         counter_names,
         outdir,
+        container,
         nvidia,
     )
     runner.start()
@@ -64,10 +71,15 @@ if __name__ == "__main__":
         help='collect GPU telemetry'
     )
     parser.add_argument(
-        '--out-dir',
+        '--output-dir',
         required=False,
         default=".",
         help='directory to put counters'
+    )
+    parser.add_argument(
+        '--container',
+        required=False,
+        help="Container image to use"
     )
     parser.add_argument(
         'program',
@@ -76,10 +88,11 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     exit(main(
+        args.program,
         args.counters,
+        args.output_dir,
+        args.container,
         args.nvidia,
         args.cpu_telemetry,
         args.gpu_telemetry,
-        args.out_dir,
-        args.program,
     ))

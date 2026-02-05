@@ -9,6 +9,18 @@ To install chopper run:
 pip install .
 ```
 
+## Profiling
+
+The chopper profiler is invoked using its python module.
+In this example, GPU and CPU telemetry are enabled.
+```
+python -m chopper.profile.collect --gpu-telemetry --cpu-telemetry -- <workload args>
+```
+It is up to the workload to enable the PyTorch profiler.
+
+To only execute the workload args and/or hardware profiler on a container while collecting telemetry outside of it, pass `--container` with the apptainer `.sif` file path.
+Otherwise, chopper can be installed and ran inside a container.
+
 ## Visualization
 
 To select and view plots run:
