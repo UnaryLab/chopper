@@ -1,8 +1,21 @@
+"""Metric derivation functions for trace analysis."""
+
 import numpy as np
 from pandas import DataFrame
 
 
 def derive_launch_overhead(df: DataFrame) -> DataFrame:
+    """Compute kernel launch overhead (gap between kernel completions).
+    
+    Calculates the time gap between the end of one kernel and the start
+    of the next kernel on the same GPU.
+    
+    Args:
+        df: DataFrame with 'gpu', 'ts', and 'dur' columns
+        
+    Returns:
+        DataFrame with added 'Launch Overhead' column in milliseconds
+    """
     df = df.sort_values(['gpu', 'ts']).reset_index()
 
     prev_end_time = (df.groupby('gpu')['ts'].shift(1) +
@@ -18,6 +31,17 @@ def derive_launch_overhead(df: DataFrame) -> DataFrame:
 
 
 def derive_prep_overhead(df: DataFrame) -> DataFrame:
+    """Compute kernel preparation overhead (CUDA runtime to kernel launch).
+    
+    Calculates the time from the end of the previous kernel to when the
+    CUDA runtime is called for the next kernel.
+    
+    Args:
+        df: DataFrame with 'gpu', 'ts', 'ts_cuda_runtime', and 'dur' columns
+        
+    Returns:
+        DataFrame with added 'Prep Overhead' column in milliseconds
+    """
     df = df.sort_values(['gpu', 'ts']).reset_index(drop=True)
 
     prev_end_time = df.groupby('gpu')['ts'].shift(
@@ -32,6 +56,17 @@ def derive_prep_overhead(df: DataFrame) -> DataFrame:
 
 
 def derive_call_overhead(df: DataFrame) -> DataFrame:
+    """Compute CUDA call overhead (runtime call to kernel launch).
+    
+    Calculates the time from when the CUDA runtime is called to when
+    the kernel actually launches on the GPU.
+    
+    Args:
+        df: DataFrame with 'gpu', 'ts', 'ts_cuda_runtime', and 'dur' columns
+        
+    Returns:
+        DataFrame with added 'Call Overhead' column in milliseconds
+    """
     df = df.sort_values(['gpu', 'ts']).reset_index(drop=True)
 
     prev_ts = df.groupby('gpu')['ts'].shift(1)
@@ -55,6 +90,19 @@ def compute_overlap_cdf(
     overlap_df: DataFrame,
     sort_ratio: bool = True,
 ) -> DataFrame:
+    """Compute cumulative distribution of communication overlap ratios.
+    
+    Analyzes what fraction of computation kernels have communication overlap,
+    producing a CDF for visualization.
+    
+    Args:
+        kernel_df: DataFrame containing computation kernels
+        overlap_df: DataFrame containing communication operations
+        sort_ratio: If True, sort by overlap ratio before computing CDF
+        
+    Returns:
+        DataFrame with 'overlap_ratio', 'cdf', and 'op_idx' columns
+    """
     cdf_df = kernel_df.copy().sort_values('ts_first').reset_index()
     cdf_df['end_ts'] = cdf_df['ts_last'] + cdf_df['dur_last']
     cdf_df['elapsed'] = cdf_df['end_ts'] - cdf_df['ts_first']
@@ -100,7 +148,6 @@ def compute_overlap_cdf(
         group['op_idx'] = group.index
         return group
 
-    result_df = cdf_df.groupby(
-        'gpu', group_keys=False)[cdf_df.columns].apply(compute_overlap_ratio)
-
-    return result_df
+    return cdf_df.groupby('gpu').apply(
+        compute_overlap_ratio
+    ).reset_index(drop=True)

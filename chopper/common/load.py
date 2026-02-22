@@ -1,12 +1,28 @@
-import pandas as pd
-from typing import Optional, List, Dict
-import chopper
+"""Data loading and preprocessing utilities for trace analysis."""
 
-from chopper.common.annotations import Framework
+import pandas as pd
+from typing import Optional, List, Dict, Sequence
+
+from chopper.common.annotations import (
+    Framework,
+    no_overlap_mask,
+    assign_operator_type,
+    assign_chunks as do_assign_chunks,
+    fix_names as do_fix_names,
+)
 from chopper.common.cache import load_pickle
 
 
 def select_iters(df: pd.DataFrame, iters: List) -> pd.DataFrame:
+    """Select specific iterations from trace data.
+    
+    Args:
+        df: DataFrame containing trace data with 'iteration' column
+        iters: List of iteration indices to select
+        
+    Returns:
+        Filtered DataFrame containing only selected iterations
+    """
     u_iters = df.loc[~df['iteration'].isna(), 'iteration'].unique()
     iters = [u_iters[i] for i in iters]
     return df[df['iteration'].isin(iters)]
@@ -21,10 +37,31 @@ def get_df(
     remove_overlap: bool = False,
     fix_names: bool = False,
     group_arr: Optional[List] = None,
-    group_map: Optional[Dict[str, list[str, str]]] = None,
+    group_map: Optional[Dict[str, List[str]]] = None,
     sort_value: Optional[str] = None,
     framework: Framework = Framework.FSDPv1,
 ) -> pd.DataFrame:
+    """Load and preprocess trace data with optional transformations.
+    
+    Main entry point for loading trace files with flexible preprocessing options
+    including filtering, grouping, and aggregation.
+    
+    Args:
+        fn: Path to trace pickle file
+        iter_idxs: Optional list of iteration indices to select
+        assign_chunks: If True, assign training phase chunks (fwd/bwd/opt)
+        assign_optype: If True, categorize operators by type (GEMM/FA/Vec)
+        remove_nan_chunks: If True, remove rows with unassigned chunks
+        remove_overlap: If True, filter out communication-overlapped kernels
+        fix_names: If True, normalize operator names
+        group_arr: Optional list of columns to group by for aggregation
+        group_map: Optional dict mapping columns to aggregation functions
+        sort_value: Optional column name to sort by after grouping
+        framework: Framework enum for framework-specific processing
+        
+    Returns:
+        Processed DataFrame with applied transformations
+    """
     df = load_pickle(fn)
     df['layer'] = df['layer'].fillna(-1)
     df = df[df['name'] != 'Memcpy HtoD (Host -> Device)']
@@ -33,18 +70,18 @@ def get_df(
         df = select_iters(df, iter_idxs)
 
     if remove_overlap:
-        df = df[chopper.common.annotations.no_overlap_mask(
+        df = df[no_overlap_mask(
             df, framework=framework)]
     if assign_optype:
-        df = chopper.common.annotations.assign_operator_type(df)
+        df = assign_operator_type(df)
 
     if assign_chunks:
-        df = chopper.common.annotations.assign_chunks(df)
+        df = do_assign_chunks(df)
         if remove_nan_chunks:
             df = df[~df['chunk'].isna()]
 
     if fix_names:
-        df = chopper.common.annotations.fix_names(df)
+        df = do_fix_names(df)
 
     if group_arr:
         assert group_map, f"Null group_map is invalid with non-null group_arr: {
@@ -55,7 +92,7 @@ def get_df(
                              if col not in df.columns.tolist())
         assert len(missing_cols) == 0, f"Missing: {missing_cols}"
 
-        weight_metrics = {}
+        weight_metrics: dict[str, list[str]] = {}
         new_group_map = {}
         for metric, aggs in group_map.items():
             for agg in aggs:
@@ -91,6 +128,22 @@ def get_straggler_df(
     framework: Framework = Framework.FSDPv1,
     kernel_name: bool = False,
 ) -> pd.DataFrame:
+    """Load and compute straggler metrics from trace data.
+    
+    Processes trace data to identify performance stragglers by computing
+    how much each GPU lags behind the slowest GPU for each operation.
+    
+    Args:
+        fn: Path to trace pickle file
+        iter_idxs: Optional list of iteration indices to select
+        agg_meth: Aggregation method ('max', 'min', 'mean') for straggler reference
+        framework: Framework enum for framework-specific processing
+        kernel_name: If True, include kernel names in grouping
+        
+    Returns:
+        DataFrame with straggler metrics including 's-value' (lag time) and
+        's-delta' (change in lag between operations)
+    """
     group_arr = ['iteration', 'layer', 'operator-name',
                  'name'] if kernel_name else ['iteration', 'layer', 'operator-name']
     df = get_df(
@@ -141,9 +194,20 @@ def get_straggler_contributors(
     delta: bool = False,
     agg_cols: List[str] = ['min', 'max', 'median', 'sum'],
 ):
+    """Aggregate straggler contributions by operator or GPU.
+    
+    Args:
+        df: DataFrame from get_straggler_df() containing straggler metrics
+        group_arr: List of columns to group by (e.g., ['gpu'], ['operator-name'])
+        delta: If True, analyze s-delta instead of s-value
+        agg_cols: List of aggregation functions to apply
+        
+    Returns:
+        DataFrame with aggregated straggler contributions
+    """
     return df.groupby(group_arr)[
         's-delta' if delta else 's-value'
-    ].agg(agg_cols).reset_index()
+    ].agg(list(agg_cols)).reset_index()
 
 
 def get_overlap_df(
@@ -153,12 +217,28 @@ def get_overlap_df(
     kernel_name: bool = False,
     include_comm_df: bool = False,
 ):
+    """Compute communication-computation overlap ratios.
+    
+    Analyzes how much computation overlaps with communication operations
+    to assess pipeline efficiency.
+    
+    Args:
+        fn: Path to trace pickle file
+        iter_idxs: Optional list of iteration indices to select
+        framework: Framework enum for framework-specific processing
+        kernel_name: If True, include kernel names in grouping
+        include_comm_df: If True, return both overlap and communication DataFrames
+        
+    Returns:
+        If include_comm_df is False: DataFrame with overlap_ratio column
+        If include_comm_df is True: Tuple of (overlap_df, comm_df)
+    """
     comm_df = get_df(
         fn,
         iter_idxs=iter_idxs,
         sort_value='ts',
     )
-    comm_df = comm_df[~chopper.common.annotations.no_overlap_mask(
+    comm_df = comm_df[~no_overlap_mask(
         comm_df, framework=framework)]
     comm_df['end_ts'] = comm_df['ts'] + comm_df['dur']
 
@@ -220,6 +300,21 @@ def get_slack_adv_df(
     kernel_name: bool = False,
     agg_meth: str = 'max',
 ):
+    """Compute slack advancement metrics for communication operations.
+    
+    Analyzes how much communication operations can be advanced (started earlier)
+    based on available slack in the computation schedule.
+    
+    Args:
+        fn: Path to trace pickle file
+        iter_idxs: Optional list of iteration indices to select
+        framework: Framework enum for framework-specific processing
+        kernel_name: If True, include kernel names in grouping
+        agg_meth: Aggregation method ('max', 'min', 'mean') for slack reference
+        
+    Returns:
+        Tuple of (comm_df, comp_df) with timing and straggler information
+    """
     group_arr = ['iteration', 'layer', 'operator-name',
                  'name'] if kernel_name else ['iteration', 'layer', 'operator-name']
     comm_df = get_df(
@@ -233,7 +328,7 @@ def get_slack_adv_df(
         sort_value='ts_first',
         framework=framework,
     )
-    comm_df = comm_df[~chopper.common.annotations.no_overlap_mask(
+    comm_df = comm_df[~no_overlap_mask(
         comm_df, framework=framework)]
     comm_df = comm_df[comm_df['name'] != 'Memcpy HtoD (Host -> Device)']
     comm_df['end_ts'] = comm_df['ts_last'] + comm_df['dur']

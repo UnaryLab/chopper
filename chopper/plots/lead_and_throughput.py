@@ -10,10 +10,25 @@ from matplotlib.figure import Figure
 
 
 def get_data(
-    ts_files: list[str] = ("./ts.pkl",),
-    variants: list[str] = ("default",),
-    frameworks: list[Framework] = (Framework.FSDPv2,),
+    ts_files: list[str] = ["./ts.pkl"],
+    variants: list[str] = ["default"],
+    frameworks: list[Framework] = [Framework.FSDPv2],
 ):
+    """Load and process straggler lead and throughput metrics.
+    
+    Extracts straggler lead values and iteration timing from trace files
+    to analyze GPU performance imbalance and training throughput.
+    
+    Args:
+        ts_files: List of paths to trace pickle files
+        variants: List of variant names corresponding to each trace file
+        frameworks: List of Framework enum values for each trace file
+        
+    Returns:
+        Tuple containing:
+            - dfs: List of processed DataFrames with straggler metrics
+            - variants: List of variant names
+    """
     dfs = []
     for ts_file, var, fw in zip(ts_files, variants, frameworks):
         df = get_straggler_df(
@@ -36,6 +51,21 @@ def draw(
     y_max: float = float("inf"),
     y_min: float = float("-inf"),
 ):
+    """Draw normalized lead and throughput over iterations.
+    
+    Creates a dual-axis plot showing straggler lead (performance imbalance)
+    and normalized throughput across training iterations. Highlights
+    pre-adjustment and post-adjustment phases.
+    
+    Args:
+        fig: Matplotlib Figure object to draw on
+        input_data: Tuple from get_data() containing straggler DataFrames
+        use_elapsed: If True, use elapsed time instead of sum duration
+        adjust_steps: Number of adjustment steps
+        wait_steps: Number of warmup steps before adjustment
+        y_max: Maximum y-axis limit
+        y_min: Minimum y-axis limit
+    """
 
     dfs, variants = input_data
 
@@ -50,7 +80,10 @@ def draw(
         for i in range(n_rows)
     )
 
-    gymin0 = gymax0 = gymin1 = gymax1 = None
+    gymin0: float | None = None
+    gymax0: float | None = None
+    gymin1: float | None = None
+    gymax1: float | None = None
     for df, variant in zip(dfs, variants):
         info(f"Drawing: {variant}")
 

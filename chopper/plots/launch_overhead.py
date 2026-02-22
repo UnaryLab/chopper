@@ -32,6 +32,21 @@ def agg(
     derive_cols_after=None,
     sum_cols_map={},
 ):
+    """Aggregate trace data with custom derivations and grouping.
+    
+    Groups trace data by specified columns and applies aggregation functions,
+    with optional pre- and post-processing derivation steps.
+    
+    Args:
+        df: Input DataFrame to aggregate
+        group_arr: List of column names to group by
+        derive_cols_before: Optional list of derivation functions to apply before aggregation
+        derive_cols_after: Optional list of derivation functions to apply after aggregation
+        sum_cols_map: Dict mapping column names to aggregation functions
+        
+    Returns:
+        Aggregated DataFrame with flattened column names
+    """
 
     if derive_cols_before is not None:
         for derive_col in derive_cols_before:
@@ -57,10 +72,25 @@ def agg(
 
 
 def get_data(
-    ts_files: list[str] = ("./ts.pkl",),
-    frameworks: list[Framework] = (Framework.FSDPv2,),
-    variants: list[str] = ("default",),
+    ts_files: list[str] = ["./ts.pkl"],
+    frameworks: list[Framework] = [Framework.FSDPv2],
+    variants: list[str] = ["default"],
 ):
+    """Load and process kernel launch overhead metrics.
+    
+    Processes trace files to extract launch overhead, prep overhead, and call
+    overhead metrics for different training operators. Filters out communication
+    kernels and aggregates metrics by operator and layer, normalizing to the
+    maximum overhead value across variants.
+    
+    Args:
+        ts_files: List of paths to trace pickle files
+        frameworks: List of Framework enum values for each trace file
+        variants: List of variant names corresponding to each trace file
+        
+    Returns:
+        Dict mapping variant names to processed DataFrames with normalized overhead metrics
+    """
     data = {
         variant: load_pickle(ts_file)
         for ts_file, variant in zip(ts_files, variants)
@@ -116,18 +146,31 @@ def get_data(
 def draw(
     fig: Figure,
     input_data,
-    lops: list[str] = (
+    lops: list[str] = [
         "f_ie",
         "b_ga",
         "opt_step",
-    ),
-    rops: list[str] = (
+    ],
+    rops: list[str] = [
         "f_attn_n",
         "b_mlp_dp",
         "b_ie",
-    ),
+    ],
     two_axes: bool = True,
 ):
+    """Draw launch overhead comparison across configurations.
+    
+    Creates a multi-panel stacked bar chart comparing prep and call overhead across
+    different operators and parameter configurations. Supports split y-axes
+    for operators with different overhead scales (e.g., communication vs compute).
+    
+    Args:
+        fig: Matplotlib Figure object to draw on
+        input_data: Dict from get_data() containing overhead metrics
+        lops: List of left-side operators to plot (typically high-overhead ops)
+        rops: List of right-side operators to plot (typically low-overhead ops)
+        two_axes: If True, use split y-axes for left and right operators
+    """
     data = input_data
     ops = lops + rops
     rgb_colors = (
@@ -176,8 +219,8 @@ def draw(
         if two_axes
         else list(tuple(range(0, n_cols)))
     )
-    g_ymin = None
-    g_ymax = None
+    g_ymin: float | None = None
+    g_ymax: float | None = None
     if two_axes:
         axs[len(lops)].set_visible(False)
 
@@ -291,7 +334,8 @@ def draw(
 
     if two_axes:
         for i in range(len(lops)):
-            axs[i].set_ylim((g_ymin, g_ymax))
+            if g_ymin is not None and g_ymax is not None:
+                axs[i].set_ylim((g_ymin, g_ymax))
 
     if two_axes:
         axl = axs[len(lops) - 1]

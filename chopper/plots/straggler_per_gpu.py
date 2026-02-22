@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import pandas as pd
 from chopper.common.load import get_straggler_df
 from chopper.common.colors import okabe_ito
 from chopper.common.cache import load_pickle
@@ -9,10 +10,25 @@ from chopper.common.annotations import Framework
 
 
 def get_data(
-    ts_files: list[str] = ("./ts.pkl",),
-    variants: list[str] = ("default",),
-    frameworks: list[Framework] = (Framework.FSDPv2,),
+    ts_files: list[str] = ["./ts.pkl"],
+    variants: list[str] = ["default"],
+    frameworks: list[Framework] = [Framework.FSDPv2],
 ):
+    """Load and process per-GPU straggler metrics.
+    
+    Extracts straggler lead values for each individual GPU to analyze
+    per-GPU performance imbalance across training iterations.
+    
+    Args:
+        ts_files: List of paths to trace pickle files
+        variants: List of variant names corresponding to each trace file
+        frameworks: List of Framework enum values for each trace file
+        
+    Returns:
+        Tuple containing:
+            - dfs: List of processed DataFrames with per-GPU straggler metrics
+            - variants: List of variant names
+    """
     dfs = [
         get_straggler_df(
             ts_file, agg_meth="max", framework=fw, kernel_name=True
@@ -31,10 +47,24 @@ def draw(
     y_min: float = float("-inf"),
     alpha: float = 1.0,
 ):
+    """Draw per-GPU straggler lead over kernel samples.
+    
+    Creates a multi-panel scatter plot showing straggler lead for each GPU
+    individually. Alternating iterations are shaded for visual clarity.
+    
+    Args:
+        fig: Matplotlib Figure object to draw on
+        input_data: Tuple from get_data() containing straggler DataFrames
+        idx_start: Starting iteration index
+        idx_end: Ending iteration index (-1 for last)
+        y_max: Maximum y-axis limit
+        y_min: Minimum y-axis limit
+        alpha: Transparency of scatter points (0-1)
+    """
 
     dfs, variants = input_data
 
-    n_gpus = None
+    n_gpus: int | None = None
     for df in dfs:
         if n_gpus is None:
             n_gpus = df["gpu"].nunique()
@@ -43,6 +73,9 @@ def draw(
 
     n_rows = len(variants)
     n_cols = n_gpus
+
+    assert n_gpus is not None, "n_gpus should not be None"
+    assert n_cols is not None, "n_cols should not be None"
 
     fig.clear()
     axs = tuple(
@@ -55,8 +88,9 @@ def draw(
         "Lead": okabe_ito["Black"],
     }
 
-    tmp_df = {}
-    gymin0 = gymax0 = 0
+    tmp_df: dict[str, dict[int, pd.DataFrame]] = {}
+    gymin0: float = 0.0
+    gymax0: float = 0.0
     max_lead = 0
     for i, (variant, df) in enumerate(zip(variants, dfs)):
         for gpu in range(n_gpus):

@@ -7,7 +7,23 @@ from matplotlib.ticker import MaxNLocator
 from matplotlib.figure import Figure
 
 
-def get_data(gpu_files: list[str] = ("./gpu.pkl",), variants: list[str] = ("FSDPv2",)):
+def get_data(gpu_files: list[str] = ["./gpu.pkl"], variants: list[str] = ["FSDPv2"]):
+    """Load and process GPU frequency and power metrics data.
+    
+    Extracts GPU clock frequency, memory clock frequency, and socket power
+    metrics from GPU telemetry files. Normalizes data and filters to focus
+    on steady-state execution periods.
+    
+    Args:
+        gpu_files: List of paths to GPU telemetry pickle files
+        variants: List of variant names corresponding to each GPU file
+        
+    Returns:
+        Tuple containing:
+            - norm_metric: Dict mapping metric names to their maximum values
+            - metric_df: Dict mapping variant names to processed DataFrames
+            - variants: List of variant names
+    """
     metrics = (
         "current_gfxclk",
         "current_uclk",
@@ -52,11 +68,11 @@ def draw(
     s: float = 0.5,
     start: float = 0.0,
     stop: float = 1.0,
-    metrics: list[str] = (
+    metrics: list[str] = [
         "current_gfxclk",
         "current_uclk",
         "current_socket_power",
-    ),
+    ],
     metric_y_max: list[float] = [
         float("inf"),
         float("inf"),
@@ -67,7 +83,45 @@ def draw(
         float("-inf"),
         float("-inf"),
     ],
+    # Layout parameters for paper figures
+    left: float = 0.1,
+    right: float = 0.9,
+    bottom: float = 0.1,
+    top: float = 0.9,
+    wspace: float = 0.2,
+    hspace: float = 0.3,
+    # Paper mode parameters
+    paper_mode: bool = False,
+    ncol: int = 2,
+    figsize_ratio: float = 1.0,
 ):
+    """Draw normalized frequency and power metrics over time.
+    
+    Creates a multi-panel scatter plot showing GPU frequency, memory frequency,
+    and socket power metrics normalized to their maximum values. Supports
+    comparing multiple variants and optionally showing per-GPU breakdown.
+    
+    Args:
+        fig: Matplotlib Figure object to draw on
+        input_data: Tuple from get_data() containing metrics and dataframes
+        show_gpus: If True, show separate plots for each GPU
+        alpha: Transparency of scatter points (0-1)
+        s: Size of scatter points
+        start: Start fraction of time window (0-1)
+        stop: End fraction of time window (0-1)
+        metrics: List of metric names to plot
+        metric_y_max: Maximum y-axis limits for each metric
+        metric_y_min: Minimum y-axis limits for each metric
+        left: Left margin for subplot adjustment
+        right: Right margin for subplot adjustment
+        bottom: Bottom margin for subplot adjustment
+        top: Top margin for subplot adjustment
+        wspace: Width spacing between subplots
+        hspace: Height spacing between subplots
+        paper_mode: Enable paper-specific formatting
+        ncol: Number of columns for legend
+        figsize_ratio: Ratio for figure size adjustment
+    """
     norm_metric, metric_df, variants = input_data
     ylabel_names = {
         "current_gfxclk": "norm",
@@ -95,6 +149,10 @@ def draw(
     n_rows = len(variants) * len(metrics)
 
     fig.clear()
+
+    # Apply layout adjustments
+    fig.subplots_adjust(left=left, right=right, bottom=bottom, top=top, wspace=wspace, hspace=hspace)
+
     axs = tuple(
         tuple(
             fig.add_subplot(n_rows, n_cols, i * n_cols + j + 1) for j in range(n_cols)

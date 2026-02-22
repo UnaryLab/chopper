@@ -3,11 +3,29 @@ from pandas import DataFrame, Series
 
 
 class Framework(enum.Enum):
+    """Training framework enumeration for trace processing.
+    
+    Attributes:
+        FSDPv1: PyTorch FSDP version 1
+        FSDPv2: PyTorch FSDP version 2
+    """
     FSDPv1 = enum.auto()
     FSDPv2 = enum.auto()
 
 
 def no_overlap_mask(df: DataFrame, framework: Framework = Framework.FSDPv1) -> Series:
+    """Create a boolean mask for non-overlapping computation kernels.
+    
+    Identifies kernels that do not overlap with communication operations,
+    based on framework-specific operator patterns and NCCL kernel names.
+    
+    Args:
+        df: DataFrame containing trace data with 'name' and 'operator-name' columns
+        framework: Framework enum specifying which framework patterns to use
+        
+    Returns:
+        Boolean Series where True indicates non-overlapping kernels
+    """
     nccl_mask = df["name"].str.startswith("ncclDevKernel")
     match framework:
         case Framework.FSDPv1:
@@ -23,11 +41,24 @@ def no_overlap_mask(df: DataFrame, framework: Framework = Framework.FSDPv1) -> S
                 'FSDP::all_gather_copy_out',
                 'FSDP::all_gather',
             ))
-            return ~df["operator-name"].str.contains(pattern, na=False, regex=True)
+            return ~(
+                df["operator-name"].str.contains(pattern, na=False, regex=True)
+                | nccl_mask
+            )
 
 
-# TODO clean up manual patches
 def assign_chunks(df: DataFrame) -> DataFrame:
+    """Assign training phase chunks (forward, backward, optimizer) to trace events.
+    
+    Categorizes operators into forward pass, backward pass, or optimizer step
+    based on operator name patterns.
+    
+    Args:
+        df: DataFrame containing trace data with 'operator-name' column
+        
+    Returns:
+        DataFrame with added 'chunk' column containing 'fwd', 'bwd', or 'opt'
+    """
     opt_grad_mask = (df['operator-name'].str.startswith(
         'f_Optimizer', na=False) |
         df['operator-name'].str.startswith(
@@ -56,8 +87,18 @@ def assign_chunks(df: DataFrame) -> DataFrame:
     return df
 
 
-# TODO clean up manual patches
 def fix_names(df: DataFrame) -> DataFrame:
+    """Normalize operator names for consistent analysis.
+    
+    Applies name transformations to standardize operator naming conventions,
+    such as removing redundant prefixes and normalizing layer names.
+    
+    Args:
+        df: DataFrame containing trace data with 'operator-name' column
+        
+    Returns:
+        DataFrame with normalized operator names
+    """
     fix_mask = df['operator-name'].str.startswith('f_b_', na=False)
     df.loc[fix_mask, 'operator-name'] = df.loc[
         fix_mask,
@@ -74,8 +115,18 @@ def fix_names(df: DataFrame) -> DataFrame:
     return df
 
 
-# TODO clean up manual patches
 def assign_operator_type(df: DataFrame) -> DataFrame:
+    """Categorize operators by computational type.
+    
+    Classifies operators into GEMM (matrix multiply), FlashAttention, or
+    vectorized operations based on operator name patterns.
+    
+    Args:
+        df: DataFrame containing trace data with 'operator-name' column
+        
+    Returns:
+        DataFrame with added 'operator-type' column containing 'GEMM', 'FA', or 'Vec'
+    """
     gemm_mask = df['operator-name'].str.endswith('p', na=False) & ~(
         df['operator-name'].str.endswith('Optimizer.step#AdamW.step', na=False))
     fa_mask = df['operator-name'].str.endswith('attn_fa', na=False)

@@ -1,3 +1,9 @@
+"""Interactive GUI for visualizing and analyzing distributed training traces.
+
+Provides a Qt-based GUI application for loading trace data, selecting plots,
+configuring parameters, and generating visualizations. Supports hot-reloading
+of plot modules for rapid development iteration.
+"""
 import sys
 from PyQt6.QtWidgets import (
     QApplication,
@@ -21,8 +27,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
 )
 from PyQt6.QtGui import QIcon
-from PyQt6.QtCore import QSize
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QSize, Qt, QThread, pyqtSignal
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -30,449 +35,52 @@ from matplotlib.figure import Figure
 import chopper.plots
 
 from chopper.common.annotations import Framework
+from chopper.selectors import (
+    PlotSelection,
+    FrameworkSelection,
+    BoolSelection,
+    StrSelection,
+    IntSelection,
+    FloatSelection,
+    StrlistSelection,
+    IntlistSelection,
+    FloatlistSelection,
+)
 
 import importlib
 import inspect
 import pkgutil
 import enum
+import pickle
+import os
 from typing import Any
 from abc import abstractmethod
 
 
-class PlotSelection(QWidget):
-    def __init__(self, vals, parent=None):
-        self.parent = parent
-        super().__init__(parent)
-        label = QLabel("available plots")
-
-        self.list = QListWidget()
-
-        for val in vals:
-            item = QListWidgetItem(val)
-            self.list.addItem(item)
-
-        self.list.itemSelectionChanged.connect(self.parent.refresh_selections)
-
-        layout = QVBoxLayout()
-        layout.addWidget(label)
-        layout.addWidget(self.list)
-        self.setLayout(layout)
-
-    def get_selected(self):
-        return self.list.selectedItems()
-
-
-class FrameworkSelection(QWidget):
-    def __init__(self, vals: list, name: str, ann, parent=None):
-        super().__init__(parent)
-        self.name = name
-        self.ann = ann
-        label = QLabel(f"{self.name}: {self.ann}")
-
-        self.list = QListWidget()
-        self.list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        self.list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
-        self.list.itemDoubleClicked.connect(self.show_dropdown)
-
-        for val in vals:
-            item = QListWidgetItem(val.name)
-            item.setData(Qt.ItemDataRole.UserRole, val)
-            self.list.addItem(item)
-
-        self.add_button = QPushButton("add")
-        self.add_button.clicked.connect(self.add_item)
-
-        self.remove_button = QPushButton("remove")
-        self.remove_button.clicked.connect(self.remove_item)
-
-        add_rem = QHBoxLayout()
-        add_rem.addWidget(self.add_button)
-        add_rem.addWidget(self.remove_button)
-
-        layout = QVBoxLayout()
-        layout.addWidget(label)
-        layout.addLayout(add_rem)
-        layout.addWidget(self.list)
-        self.setLayout(layout)
-
-    def show_dropdown(self, item):
-        menu = QMenu(self)
-        for framework in Framework:
-            action = menu.addAction(framework.name)
-            action.triggered.connect(
-                lambda checked, f=framework, i=item: self.set_framework(i, f)
-            )
-
-        rect = self.list.visualItemRect(item)
-        pos = self.list.mapToGlobal(rect.topRight())
-        menu.exec(pos)
-
-    def set_framework(self, item, framework):
-        item.setText(framework.name)
-        item.setData(Qt.ItemDataRole.UserRole, framework)
-
-    def add_item(self):
-        item = QListWidgetItem(Framework.FSDPv1.name)
-        item.setData(Qt.ItemDataRole.UserRole, Framework.FSDPv1)
-        self.list.addItem(item)
-
-    def remove_item(self):
-        for item in self.list.selectedItems():
-            row = self.list.row(item)
-            self.list.takeItem(row)
-
-    def get_selections(self):
-        return self.name, tuple(
-            self.list.item(i).data(Qt.ItemDataRole.UserRole)
-            for i in range(self.list.count())
-        )
-
-
-class BoolSelection(QCheckBox):
-    def __init__(self, val: bool, name: str, ann, parent=None):
-        super().__init__(f"{name}: {ann}", parent)
-        self.setChecked(val)
-        self.name = name
-        self.ann = ann
-
-    def get_selections(self):
-        return self.name, self.isChecked()
-
-
-class TextlistSelection(QWidget):
-    def __init__(self, strings: list[Any], name: str, ann, parent=None):
-        super().__init__(parent)
-
-        self.name = name
-        self.ann = ann
-
-        self.list = QListWidget()
-        self.list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        self.list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
-        # Better styling for cleaner look
-        self.list.setAlternatingRowColors(True)
-
-        for s in strings:
-            item = QListWidgetItem(str(s))
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
-            self.list.addItem((item))
-
-        # Mac-style +/- buttons
-        self.add_button = QPushButton("+")
-        self.add_button.setFixedSize(30, 30)
-        self.add_button.clicked.connect(self.add_item)
-
-        self.remove_button = QPushButton("−")
-        self.remove_button.setFixedSize(30, 30)
-        self.remove_button.clicked.connect(self.remove_item)
-
-        # Buttons at bottom like Mac style
-        button_layout = QHBoxLayout()
-        button_layout.addWidget(self.add_button)
-        button_layout.addWidget(self.remove_button)
-        button_layout.addStretch()
-
-        layout = QVBoxLayout()
-        layout.addWidget(QLabel(f"{self.name}: {self.ann}"))
-        layout.addWidget(self.list)
-        layout.addLayout(button_layout)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.setLayout(layout)
-
-    def add_item(self):
-        item = QListWidgetItem("new item")
-        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
-        self.list.addItem(item)
-        self.list.setCurrentItem(item)
-        self.list.editItem(item)
-
-    def remove_item(self):
-        for item in self.list.selectedItems():
-            row = self.list.row(item)
-            self.list.takeItem(row)
-
-
-class StrlistSelection(QWidget):
-    def __init__(self, strings: list[str], name: str, ann, parent=None):
-        super().__init__(parent)
-
-        self.name = name
-        self.ann = ann
-
-        self.list = QListWidget()
-        self.list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        self.list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
-        self.list.setAlternatingRowColors(True)
-
-        for s in strings:
-            item = QListWidgetItem(str(s))
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
-            self.list.addItem(item)
-
-        # Mac-style +/- buttons
-        self.add_button = QPushButton("+")
-        self.add_button.setFixedSize(30, 30)
-        self.add_button.clicked.connect(self.add_item)
-
-        self.remove_button = QPushButton("−")
-        self.remove_button.setFixedSize(30, 30)
-        self.remove_button.clicked.connect(self.remove_item)
-
-        # File browse button for string lists
-        self.browse_file_button = QPushButton("File...")
-        self.browse_file_button.clicked.connect(self.browse_file)
-
-        # Buttons at bottom
-        button_layout = QHBoxLayout()
-        button_layout.addWidget(self.add_button)
-        button_layout.addWidget(self.remove_button)
-        button_layout.addWidget(self.browse_file_button)
-        button_layout.addStretch()
-
-        layout = QVBoxLayout()
-        layout.addWidget(QLabel(f"{self.name}: {self.ann}"))
-        layout.addWidget(self.list)
-        layout.addLayout(button_layout)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.setLayout(layout)
-
-    def add_item(self):
-        item = QListWidgetItem("new item")
-        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
-        self.list.addItem(item)
-        self.list.setCurrentItem(item)
-        self.list.editItem(item)
-
-    def remove_item(self):
-        for item in self.list.selectedItems():
-            row = self.list.row(item)
-            self.list.takeItem(row)
-
-    def browse_file(self):
-        """Open file dialog to select file to replace selected item or add new."""
-        path = QFileDialog.getOpenFileName(self, f"Select File")[0]
-        if path:
-            # Check if an item is selected
-            selected_items = self.list.selectedItems()
-            if selected_items:
-                # Replace the first selected item
-                selected_items[0].setText(path)
-            else:
-                # No selection, add new item
-                item = QListWidgetItem(path)
-                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
-                self.list.addItem(item)
-
-    def get_selections(self):
-        return self.name, tuple(
-            self.list.item(i).text() for i in range(self.list.count())
-        )
-
-
-class IntlistSelection(QWidget):
-    def __init__(self, ints: list[int], name: str, ann, parent=None):
-        super().__init__(parent)
-
-        self.name = name
-        self.ann = ann
-
-        self.list = QListWidget()
-        self.list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        self.list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
-        self.list.setAlternatingRowColors(True)
-
-        for i in ints:
-            item = QListWidgetItem(str(i))
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
-            self.list.addItem(item)
-
-        # Mac-style +/- buttons (no browse for numbers)
-        self.add_button = QPushButton("+")
-        self.add_button.setFixedSize(30, 30)
-        self.add_button.clicked.connect(self.add_item)
-
-        self.remove_button = QPushButton("−")
-        self.remove_button.setFixedSize(30, 30)
-        self.remove_button.clicked.connect(self.remove_item)
-
-        button_layout = QHBoxLayout()
-        button_layout.addWidget(self.add_button)
-        button_layout.addWidget(self.remove_button)
-        button_layout.addStretch()
-
-        layout = QVBoxLayout()
-        layout.addWidget(QLabel(f"{self.name}: {self.ann}"))
-        layout.addWidget(self.list)
-        layout.addLayout(button_layout)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.setLayout(layout)
-
-    def add_item(self):
-        item = QListWidgetItem("0")
-        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
-        self.list.addItem(item)
-        self.list.setCurrentItem(item)
-        self.list.editItem(item)
-
-    def remove_item(self):
-        for item in self.list.selectedItems():
-            row = self.list.row(item)
-            self.list.takeItem(row)
-
-    def get_selections(self):
-        return self.name, tuple(
-            int(self.list.item(i).text()) for i in range(self.list.count())
-        )
-
-
-class FloatlistSelection(QWidget):
-    def __init__(self, floats: list[float], name: str, ann, parent=None):
-        super().__init__(parent)
-
-        self.name = name
-        self.ann = ann
-
-        self.list = QListWidget()
-        self.list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        self.list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
-        self.list.setAlternatingRowColors(True)
-
-        for f in floats:
-            item = QListWidgetItem(str(f))
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
-            self.list.addItem(item)
-
-        # Mac-style +/- buttons (no browse for numbers)
-        self.add_button = QPushButton("+")
-        self.add_button.setFixedSize(30, 30)
-        self.add_button.clicked.connect(self.add_item)
-
-        self.remove_button = QPushButton("−")
-        self.remove_button.setFixedSize(30, 30)
-        self.remove_button.clicked.connect(self.remove_item)
-
-        button_layout = QHBoxLayout()
-        button_layout.addWidget(self.add_button)
-        button_layout.addWidget(self.remove_button)
-        button_layout.addStretch()
-
-        layout = QVBoxLayout()
-        layout.addWidget(QLabel(f"{self.name}: {self.ann}"))
-        layout.addWidget(self.list)
-        layout.addLayout(button_layout)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.setLayout(layout)
-
-    def add_item(self):
-        item = QListWidgetItem("0.0")
-        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
-        self.list.addItem(item)
-        self.list.setCurrentItem(item)
-        self.list.editItem(item)
-
-    def remove_item(self):
-        for item in self.list.selectedItems():
-            row = self.list.row(item)
-            self.list.takeItem(row)
-
-    def get_selections(self):
-        return self.name, tuple(
-            float(self.list.item(i).text()) for i in range(self.list.count())
-        )
-
-
-class TextSelection(QWidget):
-    def __init__(self, string: Any, name: str, ann, parent=None):
-        super().__init__(parent)
-
-        self.name = name
-        self.ann = ann
-        self.line_edit = QLineEdit(str(string))
-
-        layout = QVBoxLayout()
-        layout.addWidget(QLabel(f"{self.name}: {self.ann}"))
-        layout.addWidget(self.line_edit)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.setLayout(layout)
-
-
-class StrSelection(QWidget):
-    def __init__(self, string: str, name: str, ann, parent=None):
-        super().__init__(parent)
-
-        self.name = name
-        self.ann = ann
-        self.line_edit = QLineEdit(str(string))
-
-        layout = QVBoxLayout()
-        layout.addWidget(QLabel(f"{self.name}: {self.ann}"))
-
-        # Add horizontal layout for text field + browse button
-        input_layout = QHBoxLayout()
-        input_layout.addWidget(self.line_edit)
-
-        # File browse button for strings
-        browse_file_btn = QPushButton("File...")
-        browse_file_btn.clicked.connect(self.browse_file)
-        input_layout.addWidget(browse_file_btn)
-
-        layout.addLayout(input_layout)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.setLayout(layout)
-
-    def browse_file(self):
-        """Open file dialog to select file."""
-        path = QFileDialog.getOpenFileName(self, f"Select File", self.line_edit.text() or ".")[0]
-        if path:
-            self.line_edit.setText(path)
-
-    def get_selections(self):
-        return self.name, self.line_edit.text()
-
-
-class IntSelection(QWidget):
-    def __init__(self, num: int, name: str, ann, parent=None):
-        super().__init__(parent)
-
-        self.name = name
-        self.ann = ann
-        self.line_edit = QLineEdit(str(num))
-
-        layout = QVBoxLayout()
-        layout.addWidget(QLabel(f"{self.name}: {self.ann}"))
-        layout.addWidget(self.line_edit)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.setLayout(layout)
-
-    def get_selections(self):
-        return self.name, int(self.line_edit.text())
-
-
-class FloatSelection(QWidget):
-    def __init__(self, num: float, name: str, ann, parent=None):
-        super().__init__(parent)
-
-        self.name = name
-        self.ann = ann
-        self.line_edit = QLineEdit(str(num))
-
-        layout = QVBoxLayout()
-        layout.addWidget(QLabel(f"{self.name}: {self.ann}"))
-        layout.addWidget(self.line_edit)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.setLayout(layout)
-
-    def get_selections(self):
-        return self.name, float(self.line_edit.text())
-
-
 class SelectionType(enum.Enum):
+    """Enumeration of selection panel types.
+    
+    Attributes:
+        plot: Plot module selection
+        data: Data loading parameter selection
+        draw: Plot drawing parameter selection
+    """
     plot = enum.auto()
     data = enum.auto()
     draw = enum.auto()
 
 
 class Selections(QWidget):
+    """Widget container for plot parameter selection panels.
+    
+    Manages three collapsible panels (plot, data, draw) containing parameter
+    selectors dynamically generated from plot module function signatures.
+    
+    Attributes:
+        plot_layout: Layout for plot selection widgets
+        data_box: Collapsible group box for data loading parameters
+        draw_box: Collapsible group box for drawing parameters
+    """
     def __init__(self, parent=None):
         super().__init__(parent)
         self.container = QWidget()
@@ -569,7 +177,42 @@ class Selections(QWidget):
         )
 
 
+class LoadDataThread(QThread):
+    """Background thread for loading and processing trace data.
+    
+    Executes the plot modules get_data() function in a separate thread
+    to prevent GUI freezing during file I/O operations.
+    
+    Attributes:
+        module: Plot module containing get_data function
+        param_map: Dict of parameter names to values
+    """
+    finished = pyqtSignal(object)
+    error = pyqtSignal(Exception)
+
+    def __init__(self, plot, data_selections):
+        super().__init__()
+        self.plot = plot
+        self.data_selections = data_selections
+
+    def run(self):
+        try:
+            result = self.plot.get_data(**self.data_selections)
+            self.finished.emit(result)
+        except Exception as e:
+            self.error.emit(e)
+
+
 class MatplotlibWidget(QWidget):
+    """Qt widget for embedding matplotlib figures.
+    
+    Provides a canvas for displaying matplotlib plots with toolbar integration
+    for zoom, pan, and save functionality.
+    
+    Attributes:
+        figure: Matplotlib Figure object
+        canvas: Qt canvas for rendering the figure
+    """
     def __init__(self, parent=None):
         super().__init__(parent)
         self.figure = Figure()
@@ -580,6 +223,9 @@ class MatplotlibWidget(QWidget):
         self.plot_data = {}
         self.data_selections = {}
         self.draw_selections = {}
+        self.cache_dir = "chopper_cache"
+        self.load_thread = None
+        self.loading_plot = None
 
         self.selections = Selections()
 
@@ -602,18 +248,19 @@ class MatplotlibWidget(QWidget):
         self.draw_button = QPushButton("redraw plot")
         self.draw_button.clicked.connect(self.draw_plot)
         self.draw_button.setDisabled(True)
-        self.reload_button = QPushButton("reload module")
-        self.reload_button.clicked.connect(self.reload_module)
-        self.reload_button.setDisabled(True)
+        self.save_button = QPushButton("save figure")
+        self.save_button.clicked.connect(self.save_figure)
+        self.save_button.setDisabled(True)
         refresh_layout.addWidget(self.data_button)
         refresh_layout.addWidget(self.draw_button)
-        refresh_layout.addWidget(self.reload_button)
+        refresh_layout.addWidget(self.save_button)
 
         layout.addLayout(refresh_layout)
         self.plot_modules = tuple(
             name for _, name, _ in pkgutil.iter_modules(chopper.plots.__path__)
         )
         self.plot_selection = PlotSelection(self.plot_modules, parent=self)
+
         self.refresh_selections()
         self.setLayout(layout)
         self.canvas.draw()
@@ -627,9 +274,22 @@ class MatplotlibWidget(QWidget):
             return
         assert len(plot_selected) == 1
         self.plot = importlib.import_module(f"chopper.plots.{plot_selected[0].text()}")
-        self.data_button.setEnabled(True)
-        self.draw_button.setEnabled(self.plot in self.plot_data)
-        self.reload_button.setEnabled(True)
+
+        # Load cached selections for this plot
+        self.load_cache()
+
+        # Reset button states (preserve loading state if this plot is loading)
+        if self.loading_plot == self.plot:
+            self.data_button.setEnabled(False)
+            self.data_button.setText("loading...")
+            self.draw_button.setEnabled(False)
+            self.save_button.setEnabled(False)
+        else:
+            self.data_button.setEnabled(True)
+            self.data_button.setText("load data")
+            self.draw_button.setEnabled(self.plot in self.plot_data)
+            self.save_button.setEnabled(self.plot in self.plot_data)
+        self.plot_selection.reload_button.setEnabled(True)
 
         data_sig = inspect.signature(self.plot.get_data)
         data_defaults = {
@@ -671,14 +331,38 @@ class MatplotlibWidget(QWidget):
             )
 
     def load_data(self):
-        try:
-            self.data_selections[self.plot] = self.selections.get_data_sels()
-            self.plot_data[self.plot] = self.plot.get_data(
-                **self.data_selections[self.plot]
-            )
+        self.data_selections[self.plot] = self.selections.get_data_sels()
+
+        # Disable buttons and show loading status
+        self.data_button.setEnabled(False)
+        self.data_button.setText("loading...")
+        self.draw_button.setEnabled(False)
+        self.save_button.setEnabled(False)
+
+        # Track which plot is loading
+        self.loading_plot = self.plot
+        self.load_thread = LoadDataThread(self.loading_plot, self.data_selections[self.plot])
+        self.load_thread.finished.connect(lambda result: self.on_load_finished(self.loading_plot, result))
+        self.load_thread.error.connect(lambda e: self.on_load_error(self.loading_plot, e))
+        self.load_thread.start()
+
+    def on_load_finished(self, loaded_plot, result):
+        self.plot_data[loaded_plot] = result
+        self.loading_plot = None
+        # Only update UI if we're still on the same plot
+        if loaded_plot == self.plot:
             self.draw_button.setEnabled(True)
-        except Exception as e:
-            # Show error dialog instead of crashing
+            self.save_button.setEnabled(True)
+            self.data_button.setEnabled(True)
+            self.data_button.setText("load data")
+        self.save_cache()
+
+    def on_load_error(self, loaded_plot, e):
+        self.loading_plot = None
+        # Only show error if we're still on the same plot
+        if loaded_plot == self.plot:
+            self.data_button.setEnabled(True)
+            self.data_button.setText("load data")
             error_msg = QMessageBox(self)
             error_msg.setIcon(QMessageBox.Icon.Critical)
             error_msg.setWindowTitle("Error Loading Data")
@@ -693,16 +377,85 @@ class MatplotlibWidget(QWidget):
                 raise RuntimeError("Plot data is not loaded. Click 'load data' first.")
 
             self.draw_selections[self.plot] = self.selections.get_draw_sels()
+
+            # Check if paper mode is enabled
+            paper_mode = self.draw_selections[self.plot].get('paper_mode', False)
+
+            if paper_mode:
+                # Apply paper-specific rcParams
+                import matplotlib.pyplot as plt
+                import matplotlib
+
+                plt.rcParams['font.family'] = 'Gill Sans'
+                plt.rcParams['font.size'] = 8
+                plt.rcParams['axes.labelsize'] = 8
+                plt.rcParams['hatch.color'] = 'black'
+                plt.rcParams['hatch.linewidth'] = 0.5
+                plt.rcParams['mathtext.default'] = 'regular'
+                plt.rcParams['mathtext.fontset'] = 'cm'
+
+                # Calculate figure size based on paper column width
+                width_pt = 243.91125
+                ncol = self.draw_selections[self.plot].get('ncol', 2)
+                figsize_ratio = self.draw_selections[self.plot].get('figsize_ratio', 1.0)
+
+                width_pt *= ncol
+                width_in = width_pt / 72.27
+                height_in = width_in * figsize_ratio
+                figsize = (width_in, height_in)
+
+                # Recreate figure with proper size
+                self.figure.set_size_inches(figsize)
+
             self.plot.draw(
                 self.figure, self.plot_data[self.plot], **self.draw_selections[self.plot]
             )
             self.canvas.draw()
+            # Save selections to cache
+            self.save_cache()
         except Exception as e:
             # Show error dialog instead of crashing
             error_msg = QMessageBox(self)
             error_msg.setIcon(QMessageBox.Icon.Critical)
             error_msg.setWindowTitle("Error Drawing Plot")
             error_msg.setText(f"Failed to draw plot: {type(e).__name__}")
+            error_msg.setDetailedText(str(e))
+            error_msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+            error_msg.exec()
+
+    def save_figure(self):
+        """Save the current figure with paper-quality settings."""
+        try:
+            if self.plot not in self.plot_data:
+                raise RuntimeError("Plot data is not loaded. Click 'load data' first.")
+
+            # Ask user for filename
+            filename, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save Figure",
+                "figure.pdf",
+                "PDF Files (*.pdf);;PNG Files (*.png);;All Files (*)"
+            )
+
+            if not filename:
+                return  # User cancelled
+
+            # Save with high DPI
+            self.figure.savefig(filename, dpi=300, bbox_inches='tight')
+
+            # Show success message
+            success_msg = QMessageBox(self)
+            success_msg.setIcon(QMessageBox.Icon.Information)
+            success_msg.setWindowTitle("Figure Saved")
+            success_msg.setText(f"Figure saved to:\n{filename}")
+            success_msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+            success_msg.exec()
+
+        except Exception as e:
+            error_msg = QMessageBox(self)
+            error_msg.setIcon(QMessageBox.Icon.Critical)
+            error_msg.setWindowTitle("Error Saving Figure")
+            error_msg.setText(f"Failed to save figure: {type(e).__name__}")
             error_msg.setDetailedText(str(e))
             error_msg.setStandardButtons(QMessageBox.StandardButton.Ok)
             error_msg.exec()
@@ -752,8 +505,53 @@ class MatplotlibWidget(QWidget):
             error_msg.setStandardButtons(QMessageBox.StandardButton.Ok)
             error_msg.exec()
 
+    def save_cache(self):
+        """Save current plot's selections to disk."""
+        if self.plot is None:
+            return
+        try:
+            os.makedirs(self.cache_dir, exist_ok=True)
+            plot_name = self.plot.__name__.split('.')[-1]
+            if self.plot in self.data_selections:
+                with open(f"{self.cache_dir}/{plot_name}_data.pkl", 'wb') as f:
+                    pickle.dump(self.data_selections[self.plot], f)
+            if self.plot in self.draw_selections:
+                with open(f"{self.cache_dir}/{plot_name}_draw.pkl", 'wb') as f:
+                    pickle.dump(self.draw_selections[self.plot], f)
+        except Exception:
+            pass
+
+    def load_cache(self):
+        """Load current plot's selections from disk."""
+        if self.plot is None:
+            return
+        try:
+            plot_name = self.plot.__name__.split('.')[-1]
+            data_file = f"{self.cache_dir}/{plot_name}_data.pkl"
+            draw_file = f"{self.cache_dir}/{plot_name}_draw.pkl"
+            if os.path.exists(data_file):
+                with open(data_file, 'rb') as f:
+                    self.data_selections[self.plot] = pickle.load(f)
+            if os.path.exists(draw_file):
+                with open(draw_file, 'rb') as f:
+                    self.draw_selections[self.plot] = pickle.load(f)
+        except Exception:
+            pass
+
 
 class MainWindow(QMainWindow):
+    """Main application window for Chopper trace visualization.
+    
+    Provides the primary GUI interface with plot selection, parameter configuration,
+    data loading, and visualization. Supports saving/loading sessions and exporting plots.
+    
+    Attributes:
+        matplotlib_widget: Widget containing the plot canvas
+        selections: Widget containing parameter selectors
+        plot_button: Button to regenerate the current plot
+        data: Cached data from get_data() function
+        current_module: Currently selected plot module
+    """
     def __init__(self):
         super().__init__()
         self.setWindowTitle("chopper")

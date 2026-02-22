@@ -1,9 +1,32 @@
+"""Main entry point for collecting profiling data.
+
+Orchestrates collection of hardware counters, CPU telemetry, and GPU telemetry
+during distributed training runs. Uses the Runner class to manage concurrent
+data collection threads.
+"""
 from argparse import ArgumentParser
 from chopper.profile.telemetry import cpu, gpu, counters
 from chopper.profile.runner import Runner
 
 
 def main(program,
+    """Collect profiling data during program execution.
+    
+    Starts telemetry collection threads and runs the target program
+    with performance counter instrumentation.
+    
+    Args:
+        program: Command and arguments to execute
+        counter_names: List of hardware counter names to collect
+        outdir: Output directory for collected data
+        container: Container runtime to use (docker/singularity)
+        nvidia: If True, collect NVIDIA GPU telemetry
+        cpu_telemetry: If True, collect CPU metrics
+        gpu_telemetry: If True, collect GPU metrics
+        
+    Returns:
+        Exit code (0 for success, -1 for errors)
+    """
          counter_names,
          outdir,
          container,

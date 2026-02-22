@@ -1,3 +1,9 @@
+"""Trace file merging and processing utilities.
+
+Provides functions for parsing, merging, and processing distributed training
+trace files from ROCm profiling tools. Combines GPU kernel traces, CPU operations,
+CUDA runtime calls, and hardware performance counters into unified DataFrames.
+"""
 from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 import pandas as pd
@@ -117,7 +123,18 @@ def gpu_memset_link(line, data):
     })
 
 
-def json_to_pandas(rocprof_json_filename: str) -> pd.DataFrame:
+def json_to_pandas(rocprof_json_filename: str) -> dict[str, pd.DataFrame]:
+    """Parse ROCm profile JSON file into pandas DataFrames.
+    
+    Streams JSON file and extracts kernel, CPU operation, CUDA runtime,
+    and user annotation events into separate DataFrames.
+    
+    Args:
+        rocprof_json_filename: Path to ROCm profile JSON file
+        
+    Returns:
+        Dict mapping event types to DataFrames
+    """
     cat_func_map = {
         'fwdbwd': fwdbwd_link,
         'cpu_op': cpu_op_link,
@@ -127,13 +144,13 @@ def json_to_pandas(rocprof_json_filename: str) -> pd.DataFrame:
         'gpu_memcpy': gpu_memcpy_link,
         'gpu_memset': gpu_memset_link,
     }
-    cat_func_data = {
+    cat_func_data: dict[str, list[dict]] = {
         cat: [] for cat in cat_func_map.keys()
     }
 
     with open(rocprof_json_filename, 'r') as fp:
         info("Reading timestamp data...")
-        ignore_cat = Counter()
+        ignore_cat: Counter[str] = Counter()
         for line in ijson.items(fp, 'traceEvents.item'):
             if 'cat' in line:
                 cat = line['cat']
@@ -151,10 +168,11 @@ def json_to_pandas(rocprof_json_filename: str) -> pd.DataFrame:
     for cat in ignore_cat:
         warn(f"Ignoring cat: {cat} ({ignore_cat[cat]}x)")
 
+    result: dict[str, pd.DataFrame] = {}
     for cat in cat_func_data.keys():
-        cat_func_data[cat] = pd.DataFrame(cat_func_data[cat])
+        result[cat] = pd.DataFrame(cat_func_data[cat])
 
-    return cat_func_data
+    return result
 
 
 def merge_df(left, right, on, suffixes, combine):
@@ -201,7 +219,7 @@ def add_cuda_runtime(json_data):
         # combine=('ext_id',)
         combine=()
     )
-    for key in ('gpu_memcpy', 'gpu_memset', 'kernel'):
+    for key in ['kernel']:
         json_data[key] = runtime_merge(json_data[key])
 
 
@@ -308,16 +326,28 @@ def add_cpu(json_data):
         combine=()
     )
 
-    memcpy_df = cpu_merge(json_data['gpu_memcpy'])
-    memset_df = cpu_merge(json_data['gpu_memset'])
+    # memcpy_df = cpu_merge(json_data['gpu_memcpy'])
+    # memset_df = cpu_merge(json_data['gpu_memset'])
     kernel_df = cpu_merge(json_data['kernel'])
 
     return pd.concat((
-        df for df in (memset_df, memcpy_df, kernel_df)
+        # df for df in [memset_df, memcpy_df, kernel_df]
+        df for df in [kernel_df]
     )).sort_values('ts').reset_index(drop=True)
 
 
 def parse_trace(trace_fn):
+    """Parse and process trace JSON file into structured DataFrame.
+    
+    Loads trace data, merges CUDA runtime information, assigns user annotations,
+    links forward/backward passes, and subordinates CPU operations to kernels.
+    
+    Args:
+        trace_fn: Path to trace JSON file from PyTorch profiler
+        
+    Returns:
+        Processed DataFrame with merged trace data
+    """
     json_data = json_to_pandas(trace_fn)
 
     add_cuda_runtime(json_data)
@@ -379,6 +409,20 @@ def get_merged(
     df_ts,
     iterations,
 ) -> pd.DataFrame:
+    """Merge hardware performance counters with trace data.
+
+    Combines ROCm hardware counter CSV files with trace DataFrame,
+    matching kernels by name and GPU. Validates counter data consistency
+    and filters to specified iterations.
+
+    Args:
+        counter_filenames: List of paths to counter CSV files per GPU
+        df_ts: Trace DataFrame from parse_trace()
+        iterations: Optional list of iteration numbers to include
+
+    Returns:
+        Merged DataFrame with trace data and hardware counters
+    """
 
     gpus = sorted(set(df_ts['gpu']))
     n_gpus = len(gpus)
@@ -450,7 +494,7 @@ def get_merged(
     ts_names = df_ts.loc[ts_mask, "name"]
     ts_name_set = set(ts_names)
 
-    ignore_kernels = []
+    ignore_kernels: list[str] = []
     ignore_kernels.extend(cntr_diff)
     ts_names = df_ts["name"]
 

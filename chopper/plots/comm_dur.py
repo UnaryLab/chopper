@@ -5,16 +5,34 @@ from matplotlib.ticker import MaxNLocator
 from matplotlib.figure import Figure
 from chopper.common.annotations import Framework, no_overlap_mask
 
+
 def get_data(
-    ts_files: list[str] = ("./ts.pkl",),
-    variants: list[str] = ("default",),
-    frameworks: list[Framework] = (Framework.FSDPv2,),
+    ts_files: list[str] = ["./ts.pkl"],
+    variants: list[str] = ["default"],
+    frameworks: list[Framework] = [Framework.FSDPv2],
 ):
+    """Load trace data for communication kernel duration analysis.
+    
+    Extracts communication kernel timing information from trace files
+    for analyzing collective operation performance.
+    
+    Args:
+        ts_files: List of paths to trace pickle files
+        variants: List of variant names corresponding to each trace file
+        frameworks: List of Framework enum values for each trace file
+        
+    Returns:
+        Tuple containing:
+            - dfs: List of processed DataFrames with trace data
+            - variants: List of variant names
+            - frameworks: List of Framework enum values
+    """
     dfs = [
         get_df(ts_file, framework=fw)
         for ts_file, fw in zip(ts_files, frameworks)
     ]
     return dfs, variants, frameworks
+
 
 def draw(
     fig: Figure,
@@ -27,13 +45,30 @@ def draw(
     idx_end: int = -1,
     comm_kern_filter: list[str] = [],
 ):
+    """Draw communication kernel duration scatter plots.
+    
+    Creates a multi-panel scatter plot showing duration vs timestamp for
+    different communication kernels across GPUs. Useful for identifying
+    communication performance anomalies.
+    
+    Args:
+        fig: Matplotlib Figure object to draw on
+        input_data: Tuple from get_data() containing trace data
+        y_shrink: Shrink factor for y-axis limits
+        y_max: Maximum y-axis limit
+        y_min: Minimum y-axis limit
+        alpha: Transparency of scatter points (0-1)
+        idx_start: Starting iteration index
+        idx_end: Ending iteration index (-1 for last)
+        comm_kern_filter: List of substrings to filter communication kernels
+    """
     dfs, variants, frameworks = input_data
 
     assert len(dfs) == 1 and len(variants) == 1, "Only visualizing one dataframe"
 
     framework = frameworks[0]
-    comm_kerns = None
-    gpus = None
+    comm_kerns: list[str] | None = None
+    gpus: list[int] | None = None
     for df in dfs:
         ovr_mask = no_overlap_mask(df, framework=framework)
         if comm_kerns is None:
@@ -58,6 +93,8 @@ def draw(
                 assert comm_kerns == sorted(df[~ovr_mask]["name_cpu_op"].unique())
             assert gpus == sorted(df["gpu"].unique())
 
+    assert gpus is not None
+    assert comm_kerns is not None
     n_cols = len(gpus)
     n_rows = len(comm_kerns)
 

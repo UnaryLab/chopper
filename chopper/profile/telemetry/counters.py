@@ -15,7 +15,7 @@ def main(
     assert nvidia is False, "NVIDIA counters are not supported currently"
     prof_exe = 'rocprofv3'  # TODO change for nvidia
 
-    container_args = []
+    container_args: list[str] = []
     if container is not None and container.endswith(".sif"):
         container_args.extend((
                               "apptainer",

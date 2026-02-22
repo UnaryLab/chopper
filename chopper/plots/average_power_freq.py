@@ -11,9 +11,21 @@ from matplotlib.figure import Figure
 
 
 def get_data(
-    gpu_files: list[str] = ("./gpu.pkl",),
-    variants: list[str] = ("default",),
+    gpu_files: list[str] = ["./gpu.pkl"],
+    variants: list[str] = ["default"],
 ):
+    """Load GPU telemetry data for power and frequency analysis.
+    
+    Loads raw GPU telemetry pickle files containing power and frequency
+    metrics over time.
+    
+    Args:
+        gpu_files: List of paths to GPU telemetry pickle files
+        variants: List of variant names corresponding to each GPU file
+        
+    Returns:
+        Dict mapping variant names to raw GPU telemetry DataFrames
+    """
     return {
         variant: load_pickle(gpu_file) for gpu_file, variant in zip(gpu_files, variants)
     }
@@ -25,6 +37,18 @@ def draw(
     start: float = 0,
     end: float = 1.0,
 ):
+    """Draw rolling average power and frequency metrics.
+    
+    Creates a multi-panel line plot showing rolling 95th percentile power
+    consumption and 5th percentile frequency over time, normalized to
+    their baseline values.
+    
+    Args:
+        fig: Matplotlib Figure object to draw on
+        input_data: Dict from get_data() containing GPU telemetry
+        start: Start fraction of time window (0-1)
+        end: End fraction of time window (0-1)
+    """
     data = input_data
     metrics = (
         'current_gfxclk',
@@ -48,10 +72,10 @@ def draw(
     axs = tuple(tuple(fig.add_subplot(n_rows, n_cols, i*n_cols+j+1)
                 for j in range(n_cols)) for i in range(n_rows))
 
-    gymin = {metric: None for metric in metrics}
-    gymax = gymin.copy()
-    tmp_m = {}
-    norm_tmp_m = {}
+    gymin: dict[str, float | None] = {metric: None for metric in metrics}
+    gymax: dict[str, float | None] = gymin.copy()
+    tmp_m: dict[str, dict[str, pd.DataFrame]] = {}
+    norm_tmp_m: dict[str, float] = {}
     for variant, metric_trace in data.items():
         metric_df = metric_trace.copy()
         metric_df['gpu'] -= 2
@@ -114,16 +138,22 @@ def draw(
             if gymin[metric] is None:
                 gymin[metric] = ymin
             else:
-                gymin[metric] = min(gymin[metric], ymin)
+                current_min = gymin[metric]
+                assert current_min is not None
+                gymin[metric] = min(current_min, ymin)
             if gymax[metric] is None:
                 gymax[metric] = ymax
             else:
-                gymax[metric] = max(gymax[metric], ymax)
-
+                current_max = gymax[metric]
+                assert current_max is not None
+                gymax[metric] = max(current_max, ymax)
     for variant in variants:
         for metric in metrics:
+            gmin = gymin[metric]
+            gmax = gymax[metric]
+            assert gmin is not None and gmax is not None
             axs[metrics.index(metric)][variants.index(variant)].set_ylim(
-                (gymin[metric], gymax[metric]))
+                (gmin, gmax))
             axs[metrics.index(metric)][variants.index(
                 variant)].tick_params(axis='x', pad=1)
         axs[len(metrics)-1][variants.index(variant)

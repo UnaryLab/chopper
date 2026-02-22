@@ -1,6 +1,7 @@
 from itertools import chain
 from enum import Enum, auto
 from matplotlib.figure import Figure
+from typing import Any, Callable
 
 import chopper
 import matplotlib.patches as mpatches
@@ -1323,7 +1324,7 @@ def norm_string(x, norm_type, duration, bw):
 
 
 def get_data(
-    path: str = '~/data/ispass_v2/k002-003_MODEL_NAMEllama_USE_FSDP20_ITERS20_WAIT9_ACTIVE10_POWER_MAN0_ADJUST_STEPS3_WAIT_STEPS50_INITIAL_POWER_CAP750_REALLOC_POWER0_MAX_ADJ15_USE_SUM1_USE_LAST0_USE_MAX0_USE_GLOBAL1_POWER_BUDGET0_FP80_GRAD_ACC99999_PROFILE_TYPE2/b2s8/counters.pkl',
+    path: str = './counters.pkl',
 ):
 
     selected_metrics = (
@@ -1407,6 +1408,7 @@ def draw(
     operation: str = 'b_mlp_gp',
     fontsize: int = 8,
 ):
+    comp_func: Callable[..., Any]
     if agg_meth == "median":
         comp_func = np.median
     elif agg_meth == "min":

@@ -1,12 +1,28 @@
+"""Color palettes for visualization.
+
+Provides predefined color palettes including Okabe-Ito (colorblind-friendly)
+and Catppuccin themes for creating accessible and aesthetically pleasing plots.
+"""
+
 from types import MappingProxyType
-from typing import Mapping, Tuple
+from typing import Mapping
 
 
-Color = Tuple[float, float, float]
+Color = tuple[float, float, float]
 ColorPalette = Mapping[str, Color]
 
 
 def rgb(r: int, g: int, b: int) -> Color:
+    """Convert RGB integer values (0-255) to matplotlib float format (0-1).
+    
+    Args:
+        r: Red channel value (0-255)
+        g: Green channel value (0-255)
+        b: Blue channel value (0-255)
+        
+    Returns:
+        Tuple of (r, g, b) values normalized to 0-1 range
+    """
     return (r/255, g/255, b/255)
 
 
@@ -20,6 +36,7 @@ okabe_ito: ColorPalette = MappingProxyType({
     'Red': rgb(213, 94, 0),
     'Pink': rgb(204, 121, 167),
 })
+"""Okabe-Ito colorblind-friendly color palette."""
 
 catppuccin_latte_colors: ColorPalette = MappingProxyType({
     'Rosewater': rgb(220, 138, 120),
@@ -49,6 +66,8 @@ catppuccin_latte_colors: ColorPalette = MappingProxyType({
     'Mantle': rgb(230, 233, 239),
     'Crust': rgb(220, 224, 232),
 })
+"""Catppuccin Latte light theme color palette."""
+
 catppuccin_mocha_colors: ColorPalette = MappingProxyType({
     'Rosewater': rgb(245, 224, 220),
     'Flamingo': rgb(242, 205, 205),
@@ -77,3 +96,4 @@ catppuccin_mocha_colors: ColorPalette = MappingProxyType({
     'Mantle': rgb(24, 24, 37),
     'Crust': rgb(17, 17, 27),
 })
+"""Catppuccin Mocha dark theme color palette."""
