@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QSplitter,
     QFileDialog,
     QToolButton,
+    QMessageBox,
 )
 from PyQt6.QtGui import QIcon
 from PyQt6.QtCore import QSize
@@ -248,12 +249,19 @@ class StrlistSelection(QWidget):
             self.list.takeItem(row)
 
     def browse_file(self):
-        """Open file dialog to select file to add to list."""
+        """Open file dialog to select file to replace selected item or add new."""
         path = QFileDialog.getOpenFileName(self, f"Select File")[0]
         if path:
-            item = QListWidgetItem(path)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
-            self.list.addItem(item)
+            # Check if an item is selected
+            selected_items = self.list.selectedItems()
+            if selected_items:
+                # Replace the first selected item
+                selected_items[0].setText(path)
+            else:
+                # No selection, add new item
+                item = QListWidgetItem(path)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+                self.list.addItem(item)
 
     def get_selections(self):
         return self.name, tuple(
@@ -594,8 +602,12 @@ class MatplotlibWidget(QWidget):
         self.draw_button = QPushButton("redraw plot")
         self.draw_button.clicked.connect(self.draw_plot)
         self.draw_button.setDisabled(True)
+        self.reload_button = QPushButton("reload module")
+        self.reload_button.clicked.connect(self.reload_module)
+        self.reload_button.setDisabled(True)
         refresh_layout.addWidget(self.data_button)
         refresh_layout.addWidget(self.draw_button)
+        refresh_layout.addWidget(self.reload_button)
 
         layout.addLayout(refresh_layout)
         self.plot_modules = tuple(
@@ -617,6 +629,7 @@ class MatplotlibWidget(QWidget):
         self.plot = importlib.import_module(f"chopper.plots.{plot_selected[0].text()}")
         self.data_button.setEnabled(True)
         self.draw_button.setEnabled(self.plot in self.plot_data)
+        self.reload_button.setEnabled(True)
 
         data_sig = inspect.signature(self.plot.get_data)
         data_defaults = {
@@ -658,19 +671,86 @@ class MatplotlibWidget(QWidget):
             )
 
     def load_data(self):
-        self.data_selections[self.plot] = self.selections.get_data_sels()
-        self.plot_data[self.plot] = self.plot.get_data(
-            **self.data_selections[self.plot]
-        )
-        self.draw_button.setEnabled(True)
+        try:
+            self.data_selections[self.plot] = self.selections.get_data_sels()
+            self.plot_data[self.plot] = self.plot.get_data(
+                **self.data_selections[self.plot]
+            )
+            self.draw_button.setEnabled(True)
+        except Exception as e:
+            # Show error dialog instead of crashing
+            error_msg = QMessageBox(self)
+            error_msg.setIcon(QMessageBox.Icon.Critical)
+            error_msg.setWindowTitle("Error Loading Data")
+            error_msg.setText(f"Failed to load data: {type(e).__name__}")
+            error_msg.setDetailedText(str(e))
+            error_msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+            error_msg.exec()
 
     def draw_plot(self):
-        assert self.plot in self.plot_data, "Plot data is not loaded"
-        self.draw_selections[self.plot] = self.selections.get_draw_sels()
-        self.plot.draw(
-            self.figure, self.plot_data[self.plot], **self.draw_selections[self.plot]
-        )
-        self.canvas.draw()
+        try:
+            if self.plot not in self.plot_data:
+                raise RuntimeError("Plot data is not loaded. Click 'load data' first.")
+
+            self.draw_selections[self.plot] = self.selections.get_draw_sels()
+            self.plot.draw(
+                self.figure, self.plot_data[self.plot], **self.draw_selections[self.plot]
+            )
+            self.canvas.draw()
+        except Exception as e:
+            # Show error dialog instead of crashing
+            error_msg = QMessageBox(self)
+            error_msg.setIcon(QMessageBox.Icon.Critical)
+            error_msg.setWindowTitle("Error Drawing Plot")
+            error_msg.setText(f"Failed to draw plot: {type(e).__name__}")
+            error_msg.setDetailedText(str(e))
+            error_msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+            error_msg.exec()
+
+    def reload_module(self):
+        """Reload the current plot module to pick up code changes."""
+        try:
+            if self.plot is None:
+                return
+
+            # Store the old module reference
+            old_plot = self.plot
+
+            # Reload the module
+            self.plot = importlib.reload(self.plot)
+
+            # If we had cached data for the old module, transfer it to the new one
+            if old_plot in self.plot_data:
+                self.plot_data[self.plot] = self.plot_data.pop(old_plot)
+            if old_plot in self.data_selections:
+                self.data_selections[self.plot] = self.data_selections.pop(old_plot)
+            if old_plot in self.draw_selections:
+                self.draw_selections[self.plot] = self.draw_selections.pop(old_plot)
+
+            # Refresh the parameter selections to pick up any signature changes
+            self.refresh_selections()
+
+            # If we have data loaded, automatically redraw with the new code
+            if self.plot in self.plot_data:
+                self.draw_plot()
+
+            # Show success message
+            success_msg = QMessageBox(self)
+            success_msg.setIcon(QMessageBox.Icon.Information)
+            success_msg.setWindowTitle("Module Reloaded")
+            success_msg.setText("Plot module reloaded successfully!")
+            success_msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+            success_msg.exec()
+
+        except Exception as e:
+            # Show error dialog
+            error_msg = QMessageBox(self)
+            error_msg.setIcon(QMessageBox.Icon.Critical)
+            error_msg.setWindowTitle("Error Reloading Module")
+            error_msg.setText(f"Failed to reload module: {type(e).__name__}")
+            error_msg.setDetailedText(str(e))
+            error_msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+            error_msg.exec()
 
 
 class MainWindow(QMainWindow):
