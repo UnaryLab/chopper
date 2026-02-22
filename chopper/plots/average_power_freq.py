@@ -86,11 +86,11 @@ def draw(
         group_size = n_gpus
 
         metric_df['index'] = metric_df.index // group_size
-        start = metric_df['index'].max() * start
-        end = metric_df['index'].max() * end
+        i_start = metric_df['index'].max() * start
+        i_end = metric_df['index'].max() * end
         metric_df = metric_df[
-            (metric_df['index'] > start) &
-            (metric_df['index'] < end)
+            (metric_df['index'] > i_start) &
+            (metric_df['index'] < i_end)
         ]
 
         for metric in metrics:
