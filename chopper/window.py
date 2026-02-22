@@ -30,6 +30,7 @@ from PyQt6.QtGui import QIcon
 from PyQt6.QtCore import QSize, Qt, QThread, pyqtSignal
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
 
 import chopper.plots
@@ -229,10 +230,21 @@ class MatplotlibWidget(QWidget):
 
         self.selections = Selections()
 
+        # Add matplotlib navigation toolbar for zoom, pan, etc.
+        self.toolbar = NavigationToolbar(self.canvas, self)
+
+        # Create a widget to hold canvas and toolbar
+        canvas_widget = QWidget()
+        canvas_layout = QVBoxLayout()
+        canvas_layout.addWidget(self.toolbar)
+        canvas_layout.addWidget(self.canvas)
+        canvas_layout.setContentsMargins(0, 0, 0, 0)
+        canvas_widget.setLayout(canvas_layout)
+
         # Use QSplitter for resizable divider
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self.selections)
-        splitter.addWidget(self.canvas)
+        splitter.addWidget(canvas_widget)
         splitter.setStretchFactor(0, 0)  # Selections panel doesn't stretch
         splitter.setStretchFactor(1, 1)  # Canvas stretches
         splitter.setSizes([300, 700])  # Initial sizes
@@ -248,12 +260,8 @@ class MatplotlibWidget(QWidget):
         self.draw_button = QPushButton("redraw plot")
         self.draw_button.clicked.connect(self.draw_plot)
         self.draw_button.setDisabled(True)
-        self.save_button = QPushButton("save figure")
-        self.save_button.clicked.connect(self.save_figure)
-        self.save_button.setDisabled(True)
         refresh_layout.addWidget(self.data_button)
         refresh_layout.addWidget(self.draw_button)
-        refresh_layout.addWidget(self.save_button)
 
         layout.addLayout(refresh_layout)
         self.plot_modules = tuple(
@@ -283,12 +291,10 @@ class MatplotlibWidget(QWidget):
             self.data_button.setEnabled(False)
             self.data_button.setText("loading...")
             self.draw_button.setEnabled(False)
-            self.save_button.setEnabled(False)
         else:
             self.data_button.setEnabled(True)
             self.data_button.setText("load data")
             self.draw_button.setEnabled(self.plot in self.plot_data)
-            self.save_button.setEnabled(self.plot in self.plot_data)
         self.plot_selection.reload_button.setEnabled(True)
 
         data_sig = inspect.signature(self.plot.get_data)
@@ -337,7 +343,6 @@ class MatplotlibWidget(QWidget):
         self.data_button.setEnabled(False)
         self.data_button.setText("loading...")
         self.draw_button.setEnabled(False)
-        self.save_button.setEnabled(False)
 
         # Track which plot is loading
         self.loading_plot = self.plot
@@ -352,7 +357,6 @@ class MatplotlibWidget(QWidget):
         # Only update UI if we're still on the same plot
         if loaded_plot == self.plot:
             self.draw_button.setEnabled(True)
-            self.save_button.setEnabled(True)
             self.data_button.setEnabled(True)
             self.data_button.setText("load data")
         self.save_cache()
@@ -419,43 +423,6 @@ class MatplotlibWidget(QWidget):
             error_msg.setIcon(QMessageBox.Icon.Critical)
             error_msg.setWindowTitle("Error Drawing Plot")
             error_msg.setText(f"Failed to draw plot: {type(e).__name__}")
-            error_msg.setDetailedText(str(e))
-            error_msg.setStandardButtons(QMessageBox.StandardButton.Ok)
-            error_msg.exec()
-
-    def save_figure(self):
-        """Save the current figure with paper-quality settings."""
-        try:
-            if self.plot not in self.plot_data:
-                raise RuntimeError("Plot data is not loaded. Click 'load data' first.")
-
-            # Ask user for filename
-            filename, _ = QFileDialog.getSaveFileName(
-                self,
-                "Save Figure",
-                "figure.pdf",
-                "PDF Files (*.pdf);;PNG Files (*.png);;All Files (*)"
-            )
-
-            if not filename:
-                return  # User cancelled
-
-            # Save with high DPI
-            self.figure.savefig(filename, dpi=300, bbox_inches='tight')
-
-            # Show success message
-            success_msg = QMessageBox(self)
-            success_msg.setIcon(QMessageBox.Icon.Information)
-            success_msg.setWindowTitle("Figure Saved")
-            success_msg.setText(f"Figure saved to:\n{filename}")
-            success_msg.setStandardButtons(QMessageBox.StandardButton.Ok)
-            success_msg.exec()
-
-        except Exception as e:
-            error_msg = QMessageBox(self)
-            error_msg.setIcon(QMessageBox.Icon.Critical)
-            error_msg.setWindowTitle("Error Saving Figure")
-            error_msg.setText(f"Failed to save figure: {type(e).__name__}")
             error_msg.setDetailedText(str(e))
             error_msg.setStandardButtons(QMessageBox.StandardButton.Ok)
             error_msg.exec()
