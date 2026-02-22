@@ -14,7 +14,13 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QFrame,
     QGroupBox,
+    QLineEdit,
+    QSplitter,
+    QFileDialog,
+    QToolButton,
 )
+from PyQt6.QtGui import QIcon
+from PyQt6.QtCore import QSize
 from PyQt6.QtCore import Qt
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -28,14 +34,15 @@ import importlib
 import inspect
 import pkgutil
 import enum
-from typing import Tuple
+from typing import Any
+from abc import abstractmethod
 
 
 class PlotSelection(QWidget):
     def __init__(self, vals, parent=None):
         self.parent = parent
         super().__init__(parent)
-        label = QLabel('available plots')
+        label = QLabel("available plots")
 
         self.list = QListWidget()
 
@@ -59,7 +66,7 @@ class FrameworkSelection(QWidget):
         super().__init__(parent)
         self.name = name
         self.ann = ann
-        label = QLabel(f'{self.name}: {self.ann}')
+        label = QLabel(f"{self.name}: {self.ann}")
 
         self.list = QListWidget()
         self.list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
@@ -71,10 +78,10 @@ class FrameworkSelection(QWidget):
             item.setData(Qt.ItemDataRole.UserRole, val)
             self.list.addItem(item)
 
-        self.add_button = QPushButton('add')
+        self.add_button = QPushButton("add")
         self.add_button.clicked.connect(self.add_item)
 
-        self.remove_button = QPushButton('remove')
+        self.remove_button = QPushButton("remove")
         self.remove_button.clicked.connect(self.remove_item)
 
         add_rem = QHBoxLayout()
@@ -92,7 +99,8 @@ class FrameworkSelection(QWidget):
         for framework in Framework:
             action = menu.addAction(framework.name)
             action.triggered.connect(
-                lambda checked, f=framework, i=item: self.set_framework(i, f))
+                lambda checked, f=framework, i=item: self.set_framework(i, f)
+            )
 
         rect = self.list.visualItemRect(item)
         pos = self.list.mapToGlobal(rect.topRight())
@@ -113,13 +121,15 @@ class FrameworkSelection(QWidget):
             self.list.takeItem(row)
 
     def get_selections(self):
-        return self.name, tuple(self.list.item(i).data(Qt.ItemDataRole.UserRole)
-                                for i in range(self.list.count()))
+        return self.name, tuple(
+            self.list.item(i).data(Qt.ItemDataRole.UserRole)
+            for i in range(self.list.count())
+        )
 
 
 class BoolSelection(QCheckBox):
     def __init__(self, val: bool, name: str, ann, parent=None):
-        super().__init__(f'{name}: {ann}', parent)
+        super().__init__(f"{name}: {ann}", parent)
         self.setChecked(val)
         self.name = name
         self.ann = ann
@@ -128,39 +138,169 @@ class BoolSelection(QCheckBox):
         return self.name, self.isChecked()
 
 
-class StrTupleSelection(QWidget):
-    def __init__(self, strings: Tuple[str], name: str, ann, parent=None):
+class TextlistSelection(QWidget):
+    def __init__(self, strings: list[Any], name: str, ann, parent=None):
         super().__init__(parent)
 
         self.name = name
         self.ann = ann
+
         self.list = QListWidget()
         self.list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self.list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
+        # Better styling for cleaner look
+        self.list.setAlternatingRowColors(True)
 
         for s in strings:
-            item = QListWidgetItem(s)
+            item = QListWidgetItem(str(s))
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
-            self.list.addItem(item)
+            self.list.addItem((item))
 
-        self.add_button = QPushButton('add')
+        # Mac-style +/- buttons
+        self.add_button = QPushButton("+")
+        self.add_button.setFixedSize(30, 30)
         self.add_button.clicked.connect(self.add_item)
 
-        self.remove_button = QPushButton('remove')
+        self.remove_button = QPushButton("−")
+        self.remove_button.setFixedSize(30, 30)
         self.remove_button.clicked.connect(self.remove_item)
 
-        add_rem = QHBoxLayout()
-        add_rem.addWidget(self.add_button)
-        add_rem.addWidget(self.remove_button)
+        # Buttons at bottom like Mac style
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self.add_button)
+        button_layout.addWidget(self.remove_button)
+        button_layout.addStretch()
 
         layout = QVBoxLayout()
-        layout.addWidget(QLabel(f'{self.name}: {self.ann}'))
-        layout.addLayout(add_rem)
+        layout.addWidget(QLabel(f"{self.name}: {self.ann}"))
         layout.addWidget(self.list)
+        layout.addLayout(button_layout)
+        layout.setContentsMargins(0, 0, 0, 0)
         self.setLayout(layout)
 
     def add_item(self):
-        item = QListWidgetItem("add string")
+        item = QListWidgetItem("new item")
+        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+        self.list.addItem(item)
+        self.list.setCurrentItem(item)
+        self.list.editItem(item)
+
+    def remove_item(self):
+        for item in self.list.selectedItems():
+            row = self.list.row(item)
+            self.list.takeItem(row)
+
+
+class StrlistSelection(QWidget):
+    def __init__(self, strings: list[str], name: str, ann, parent=None):
+        super().__init__(parent)
+
+        self.name = name
+        self.ann = ann
+
+        self.list = QListWidget()
+        self.list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
+        self.list.setAlternatingRowColors(True)
+
+        for s in strings:
+            item = QListWidgetItem(str(s))
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+            self.list.addItem(item)
+
+        # Mac-style +/- buttons
+        self.add_button = QPushButton("+")
+        self.add_button.setFixedSize(30, 30)
+        self.add_button.clicked.connect(self.add_item)
+
+        self.remove_button = QPushButton("−")
+        self.remove_button.setFixedSize(30, 30)
+        self.remove_button.clicked.connect(self.remove_item)
+
+        # File browse button for string lists
+        self.browse_file_button = QPushButton("File...")
+        self.browse_file_button.clicked.connect(self.browse_file)
+
+        # Buttons at bottom
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self.add_button)
+        button_layout.addWidget(self.remove_button)
+        button_layout.addWidget(self.browse_file_button)
+        button_layout.addStretch()
+
+        layout = QVBoxLayout()
+        layout.addWidget(QLabel(f"{self.name}: {self.ann}"))
+        layout.addWidget(self.list)
+        layout.addLayout(button_layout)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.setLayout(layout)
+
+    def add_item(self):
+        item = QListWidgetItem("new item")
+        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+        self.list.addItem(item)
+        self.list.setCurrentItem(item)
+        self.list.editItem(item)
+
+    def remove_item(self):
+        for item in self.list.selectedItems():
+            row = self.list.row(item)
+            self.list.takeItem(row)
+
+    def browse_file(self):
+        """Open file dialog to select file to add to list."""
+        path = QFileDialog.getOpenFileName(self, f"Select File")[0]
+        if path:
+            item = QListWidgetItem(path)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+            self.list.addItem(item)
+
+    def get_selections(self):
+        return self.name, tuple(
+            self.list.item(i).text() for i in range(self.list.count())
+        )
+
+
+class IntlistSelection(QWidget):
+    def __init__(self, ints: list[int], name: str, ann, parent=None):
+        super().__init__(parent)
+
+        self.name = name
+        self.ann = ann
+
+        self.list = QListWidget()
+        self.list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
+        self.list.setAlternatingRowColors(True)
+
+        for i in ints:
+            item = QListWidgetItem(str(i))
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+            self.list.addItem(item)
+
+        # Mac-style +/- buttons (no browse for numbers)
+        self.add_button = QPushButton("+")
+        self.add_button.setFixedSize(30, 30)
+        self.add_button.clicked.connect(self.add_item)
+
+        self.remove_button = QPushButton("−")
+        self.remove_button.setFixedSize(30, 30)
+        self.remove_button.clicked.connect(self.remove_item)
+
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self.add_button)
+        button_layout.addWidget(self.remove_button)
+        button_layout.addStretch()
+
+        layout = QVBoxLayout()
+        layout.addWidget(QLabel(f"{self.name}: {self.ann}"))
+        layout.addWidget(self.list)
+        layout.addLayout(button_layout)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.setLayout(layout)
+
+    def add_item(self):
+        item = QListWidgetItem("0")
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
         self.list.addItem(item)
         self.list.setCurrentItem(item)
@@ -172,7 +312,80 @@ class StrTupleSelection(QWidget):
             self.list.takeItem(row)
 
     def get_selections(self):
-        return self.name, tuple(self.list.item(i).text() for i in range(self.list.count()))
+        return self.name, tuple(
+            int(self.list.item(i).text()) for i in range(self.list.count())
+        )
+
+
+class FloatlistSelection(QWidget):
+    def __init__(self, floats: list[float], name: str, ann, parent=None):
+        super().__init__(parent)
+
+        self.name = name
+        self.ann = ann
+
+        self.list = QListWidget()
+        self.list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
+        self.list.setAlternatingRowColors(True)
+
+        for f in floats:
+            item = QListWidgetItem(str(f))
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+            self.list.addItem(item)
+
+        # Mac-style +/- buttons (no browse for numbers)
+        self.add_button = QPushButton("+")
+        self.add_button.setFixedSize(30, 30)
+        self.add_button.clicked.connect(self.add_item)
+
+        self.remove_button = QPushButton("−")
+        self.remove_button.setFixedSize(30, 30)
+        self.remove_button.clicked.connect(self.remove_item)
+
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self.add_button)
+        button_layout.addWidget(self.remove_button)
+        button_layout.addStretch()
+
+        layout = QVBoxLayout()
+        layout.addWidget(QLabel(f"{self.name}: {self.ann}"))
+        layout.addWidget(self.list)
+        layout.addLayout(button_layout)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.setLayout(layout)
+
+    def add_item(self):
+        item = QListWidgetItem("0.0")
+        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+        self.list.addItem(item)
+        self.list.setCurrentItem(item)
+        self.list.editItem(item)
+
+    def remove_item(self):
+        for item in self.list.selectedItems():
+            row = self.list.row(item)
+            self.list.takeItem(row)
+
+    def get_selections(self):
+        return self.name, tuple(
+            float(self.list.item(i).text()) for i in range(self.list.count())
+        )
+
+
+class TextSelection(QWidget):
+    def __init__(self, string: Any, name: str, ann, parent=None):
+        super().__init__(parent)
+
+        self.name = name
+        self.ann = ann
+        self.line_edit = QLineEdit(str(string))
+
+        layout = QVBoxLayout()
+        layout.addWidget(QLabel(f"{self.name}: {self.ann}"))
+        layout.addWidget(self.line_edit)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.setLayout(layout)
 
 
 class StrSelection(QWidget):
@@ -181,45 +394,68 @@ class StrSelection(QWidget):
 
         self.name = name
         self.ann = ann
-        self.list = QListWidget()
-        self.list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        self.list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
-
-        self.item = QListWidgetItem(string)
-        self.item.setFlags(self.item.flags() | Qt.ItemFlag.ItemIsEditable)
-        self.list.addItem(self.item)
+        self.line_edit = QLineEdit(str(string))
 
         layout = QVBoxLayout()
-        layout.addWidget(QLabel(f'{self.name}: {self.ann}'))
-        layout.addWidget(self.list)
+        layout.addWidget(QLabel(f"{self.name}: {self.ann}"))
+
+        # Add horizontal layout for text field + browse button
+        input_layout = QHBoxLayout()
+        input_layout.addWidget(self.line_edit)
+
+        # File browse button for strings
+        browse_file_btn = QPushButton("File...")
+        browse_file_btn.clicked.connect(self.browse_file)
+        input_layout.addWidget(browse_file_btn)
+
+        layout.addLayout(input_layout)
+        layout.setContentsMargins(0, 0, 0, 0)
         self.setLayout(layout)
 
+    def browse_file(self):
+        """Open file dialog to select file."""
+        path = QFileDialog.getOpenFileName(self, f"Select File", self.line_edit.text() or ".")[0]
+        if path:
+            self.line_edit.setText(path)
+
     def get_selections(self):
-        return self.name, self.item.text()
+        return self.name, self.line_edit.text()
 
 
 class IntSelection(QWidget):
-    def __init__(self, integer: int, name: str, ann, parent=None):
+    def __init__(self, num: int, name: str, ann, parent=None):
         super().__init__(parent)
 
         self.name = name
         self.ann = ann
-        self.list = QListWidget()
-        self.list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        self.list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
-
-        self.item = QListWidgetItem()
-        self.item.setFlags(self.item.flags() | Qt.ItemFlag.ItemIsEditable)
-        self.item.setData(Qt.ItemDataRole.EditRole, integer)
-        self.list.addItem(self.item)
+        self.line_edit = QLineEdit(str(num))
 
         layout = QVBoxLayout()
-        layout.addWidget(QLabel(f'{self.name}: {self.ann}'))
-        layout.addWidget(self.list)
+        layout.addWidget(QLabel(f"{self.name}: {self.ann}"))
+        layout.addWidget(self.line_edit)
+        layout.setContentsMargins(0, 0, 0, 0)
         self.setLayout(layout)
 
     def get_selections(self):
-        return self.name, self.item.data(Qt.ItemDataRole.EditRole)
+        return self.name, int(self.line_edit.text())
+
+
+class FloatSelection(QWidget):
+    def __init__(self, num: float, name: str, ann, parent=None):
+        super().__init__(parent)
+
+        self.name = name
+        self.ann = ann
+        self.line_edit = QLineEdit(str(num))
+
+        layout = QVBoxLayout()
+        layout.addWidget(QLabel(f"{self.name}: {self.ann}"))
+        layout.addWidget(self.line_edit)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.setLayout(layout)
+
+    def get_selections(self):
+        return self.name, float(self.line_edit.text())
 
 
 class SelectionType(enum.Enum):
@@ -245,7 +481,8 @@ class Selections(QWidget):
         self.data_box.setLayout(self.data_layout)
         self.toggle_box(self.data_box, False)
         self.data_box.toggled.connect(
-            lambda checked: self.toggle_box(self.data_box, checked))
+            lambda checked: self.toggle_box(self.data_box, checked)
+        )
 
         self.draw_box = QGroupBox("draw args")
         self.draw_box_placeholder = QLabel("check box to expand")
@@ -256,7 +493,8 @@ class Selections(QWidget):
         self.draw_box.setLayout(self.draw_layout)
         self.toggle_box(self.draw_box, False)
         self.draw_box.toggled.connect(
-            lambda checked: self.toggle_box(self.draw_box, checked))
+            lambda checked: self.toggle_box(self.draw_box, checked)
+        )
 
         self.container_layout.addLayout(self.plot_layout)
         self.container_layout.addWidget(self.data_box)
@@ -265,24 +503,14 @@ class Selections(QWidget):
         self.scroll = QScrollArea()
         self.scroll.setWidget(self.container)
         self.scroll.setWidgetResizable(True)
-        self.scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.scroll.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
-        self.divider = QFrame()
-        self.divider.setFrameShape(QFrame.Shape.VLine)
-        self.divider.setCursor(Qt.CursorShape.SplitHCursor)
-        self.divider.setFixedWidth(8)
-        self.divider.setStyleSheet("QFrame { background-color: #fff; }")
+        # Use a simple layout without custom divider
         self.layout = QHBoxLayout()
         self.layout.addWidget(self.scroll)
-        self.layout.addWidget(self.divider)
+        self.layout.setContentsMargins(0, 0, 0, 0)
         self.setLayout(self.layout)
-        self.dragging = False
-        self.divider.mousePressEvent = self.start_drag
-        self.divider.mouseMoveEvent = self.do_drag
-        self.divider.mouseReleaseEvent = self.end_drag
 
     def toggle_box(self, group_box, checked):
         for i in range(group_box.layout().count()):
@@ -304,41 +532,33 @@ class Selections(QWidget):
                 selection.setVisible(self.draw_box.isChecked())
                 self.draw_layout.addWidget(selection)
 
-    def start_drag(self, event):
-        self.dragging = True
-
-    def do_drag(self, event):
-        if self.dragging:
-            global_pos = self.divider.mapToGlobal(event.pos())
-            local_pos = self.mapFromGlobal(global_pos)
-            new_width = local_pos.x()
-            if new_width >= 0:
-                self.scroll.setFixedWidth(new_width)
-
-    def end_drag(self, event):
-        self.dragging = False
-
     def clear(self):
         # pop from layout
         # take index 1 to skip placeholder text
-        for _ in range(self.data_layout.count()-1):
+        for _ in range(self.data_layout.count() - 1):
             item = self.data_layout.takeAt(1)
             item.widget().deleteLater()
-        for _ in range(self.draw_layout.count()-1):
+        for _ in range(self.draw_layout.count() - 1):
             item = self.draw_layout.takeAt(1)
             item.widget().deleteLater()
 
     def get_data_sels(self):
-        return dict(self.data_layout.itemAt(i).widget().get_selections()
-                    for i in range(
-            1,  # skip placeholder text
-            self.data_layout.count()))
+        return dict(
+            self.data_layout.itemAt(i).widget().get_selections()
+            for i in range(
+                1,  # skip placeholder text
+                self.data_layout.count(),
+            )
+        )
 
     def get_draw_sels(self):
-        return dict(self.draw_layout.itemAt(i).widget().get_selections()
-                    for i in range(
-            1,  # skip placeholder text
-            self.draw_layout.count()))
+        return dict(
+            self.draw_layout.itemAt(i).widget().get_selections()
+            for i in range(
+                1,  # skip placeholder text
+                self.draw_layout.count(),
+            )
+        )
 
 
 class MatplotlibWidget(QWidget):
@@ -352,13 +572,21 @@ class MatplotlibWidget(QWidget):
         self.plot_data = {}
         self.data_selections = {}
         self.draw_selections = {}
-        layout = QVBoxLayout()
-        inner = QHBoxLayout()
+
         self.selections = Selections()
+
+        # Use QSplitter for resizable divider
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.addWidget(self.selections)
+        splitter.addWidget(self.canvas)
+        splitter.setStretchFactor(0, 0)  # Selections panel doesn't stretch
+        splitter.setStretchFactor(1, 1)  # Canvas stretches
+        splitter.setSizes([300, 700])  # Initial sizes
+
+        layout = QVBoxLayout()
+        layout.addWidget(splitter)
+
         refresh_layout = QHBoxLayout()
-        inner.addWidget(self.selections)
-        inner.addWidget(self.canvas, stretch=1)
-        layout.addLayout(inner)
 
         self.data_button = QPushButton("load data")
         self.data_button.clicked.connect(self.load_data)
@@ -371,7 +599,8 @@ class MatplotlibWidget(QWidget):
 
         layout.addLayout(refresh_layout)
         self.plot_modules = tuple(
-            name for _, name, _ in pkgutil.iter_modules(chopper.plots.__path__))
+            name for _, name, _ in pkgutil.iter_modules(chopper.plots.__path__)
+        )
         self.plot_selection = PlotSelection(self.plot_modules, parent=self)
         self.refresh_selections()
         self.setLayout(layout)
@@ -385,8 +614,7 @@ class MatplotlibWidget(QWidget):
         if plot_selected == []:
             return
         assert len(plot_selected) == 1
-        self.plot = importlib.import_module(
-            f"chopper.plots.{plot_selected[0].text()}")
+        self.plot = importlib.import_module(f"chopper.plots.{plot_selected[0].text()}")
         self.data_button.setEnabled(True)
         self.draw_button.setEnabled(self.plot in self.plot_data)
 
@@ -396,26 +624,24 @@ class MatplotlibWidget(QWidget):
             for name, param in data_sig.parameters.items()
             if param.default is not inspect._empty
         }
+
+        selection_map = {
+            inspect.formatannotation(list[str]): StrlistSelection,
+            inspect.formatannotation(list[int]): IntlistSelection,
+            inspect.formatannotation(list[float]): FloatlistSelection,
+            inspect.formatannotation(bool): BoolSelection,
+            inspect.formatannotation(list[Framework]): FrameworkSelection,
+            inspect.formatannotation(str): StrSelection,
+            inspect.formatannotation(int): IntSelection,
+            inspect.formatannotation(float): FloatSelection,
+        }
+
         plot_data_slot = self.data_selections.setdefault(self.plot, {})
         for (name, ann), vals in data_defaults.items():
             cache_vals = plot_data_slot.setdefault(name, vals)
-            if ann == inspect.formatannotation(Tuple[str]):
-                self.selections.add_selection(
-                    StrTupleSelection(cache_vals, name, ann), SelectionType.data)
-            elif ann == inspect.formatannotation(bool):
-                self.selections.add_selection(
-                    BoolSelection(cache_vals, name, ann), SelectionType.data)
-            elif ann == inspect.formatannotation(Tuple[Framework]):
-                self.selections.add_selection(
-                    FrameworkSelection(cache_vals, name, ann), SelectionType.data)
-            elif ann == inspect.formatannotation(str):
-                self.selections.add_selection(
-                    StrSelection(cache_vals, name, ann), SelectionType.data)
-            elif ann == inspect.formatannotation(int):
-                self.selections.add_selection(
-                    IntSelection(cache_vals, name, ann), SelectionType.data)
-            else:
-                raise TypeError(f"Unknown annotation: {ann}")
+            self.selections.add_selection(
+                selection_map[ann](cache_vals, name, ann), SelectionType.data
+            )
 
         draw_sig = inspect.signature(self.plot.draw)
         draw_defaults = {
@@ -427,35 +653,23 @@ class MatplotlibWidget(QWidget):
         plot_draw_slot = self.draw_selections.setdefault(self.plot, {})
         for (name, ann), vals in draw_defaults.items():
             cache_vals = plot_draw_slot.setdefault(name, vals)
-            if ann == inspect.formatannotation(Tuple[str]):
-                self.selections.add_selection(
-                    StrTupleSelection(cache_vals, name, ann), SelectionType.draw)
-            elif ann == inspect.formatannotation(bool):
-                self.selections.add_selection(
-                    BoolSelection(cache_vals, name, ann), SelectionType.draw)
-            elif ann == inspect.formatannotation(Tuple[Framework]):
-                self.selections.add_selection(
-                    FrameworkSelection(vals, name, ann), SelectionType.draw)
-            elif ann == inspect.formatannotation(str):
-                self.selections.add_selection(
-                    StrSelection(cache_vals, name, ann), SelectionType.draw)
-            elif ann == inspect.formatannotation(int):
-                self.selections.add_selection(
-                    IntSelection(cache_vals, name, ann), SelectionType.draw)
-            else:
-                raise TypeError(f"Unknown annotation: {ann}")
+            self.selections.add_selection(
+                selection_map[ann](cache_vals, name, ann), SelectionType.draw
+            )
 
     def load_data(self):
         self.data_selections[self.plot] = self.selections.get_data_sels()
         self.plot_data[self.plot] = self.plot.get_data(
-            **self.data_selections[self.plot])
+            **self.data_selections[self.plot]
+        )
         self.draw_button.setEnabled(True)
 
     def draw_plot(self):
         assert self.plot in self.plot_data, "Plot data is not loaded"
         self.draw_selections[self.plot] = self.selections.get_draw_sels()
         self.plot.draw(
-            self.figure, self.plot_data[self.plot], **self.draw_selections[self.plot])
+            self.figure, self.plot_data[self.plot], **self.draw_selections[self.plot]
+        )
         self.canvas.draw()
 
 

@@ -10,6 +10,7 @@ import matplotlib.patches as mpatches
 from matplotlib import rcParams
 
 from chopper.common.colors import rgb
+from chopper.common.cache import load_pickle
 from chopper.common.annotations import (
     no_overlap_mask,
     assign_chunks,
@@ -22,24 +23,29 @@ from chopper.common.trace_metrics import (
 )
 
 from chopper.common.annotations import Framework
-from typing import Tuple
 
 
-def agg(df,
-        group_arr,
-        derive_cols_before=None,
-        derive_cols_after=None,
-        sum_cols_map={},
-        ):
+def agg(
+    df,
+    group_arr,
+    derive_cols_before=None,
+    derive_cols_after=None,
+    sum_cols_map={},
+):
 
     if derive_cols_before is not None:
         for derive_col in derive_cols_before:
             df = derive_col(df)
 
-    df_summed = df.groupby(group_arr, dropna=False).agg(
-        {
-            **sum_cols_map,
-        }).reset_index()
+    df_summed = (
+        df.groupby(group_arr, dropna=False)
+        .agg(
+            {
+                **sum_cols_map,
+            }
+        )
+        .reset_index()
+    )
 
     df_summed.columns = [col[0] for col in df_summed.columns]
 
@@ -51,71 +57,34 @@ def agg(df,
 
 
 def get_data(
-    pkl_dirs: Tuple[str] = (
-        '~/data/ispass_v2/k002-003_MODEL_NAMEllama_USE_FSDP21_ITERS20_WAIT9_ACTIVE10_POWER_MAN0_ADJUST_STEPS3_WAIT_STEPS50_INITIAL_POWER_CAP750_REALLOC_POWER0_MAX_ADJ15_USE_SUM1_USE_LAST0_USE_MAX0_USE_GLOBAL1_POWER_BUDGET0_FP80_GRAD_ACC15_PROFILE_TYPE2/b1s4/',
-        '~/data/ispass_v2/k002-003_MODEL_NAMEllama_USE_FSDP21_ITERS20_WAIT9_ACTIVE10_POWER_MAN0_ADJUST_STEPS3_WAIT_STEPS50_INITIAL_POWER_CAP750_REALLOC_POWER0_MAX_ADJ15_USE_SUM1_USE_LAST0_USE_MAX0_USE_GLOBAL1_POWER_BUDGET0_FP80_GRAD_ACC15_PROFILE_TYPE2/b2s4/',
-        '~/data/ispass_v2/k002-003_MODEL_NAMEllama_USE_FSDP21_ITERS20_WAIT9_ACTIVE10_POWER_MAN0_ADJUST_STEPS3_WAIT_STEPS50_INITIAL_POWER_CAP750_REALLOC_POWER0_MAX_ADJ15_USE_SUM1_USE_LAST0_USE_MAX0_USE_GLOBAL1_POWER_BUDGET0_FP80_GRAD_ACC15_PROFILE_TYPE2/b4s4/',
-        '~/data/ispass_v2/k002-003_MODEL_NAMEllama_USE_FSDP21_ITERS20_WAIT9_ACTIVE10_POWER_MAN0_ADJUST_STEPS3_WAIT_STEPS50_INITIAL_POWER_CAP750_REALLOC_POWER0_MAX_ADJ15_USE_SUM1_USE_LAST0_USE_MAX0_USE_GLOBAL1_POWER_BUDGET0_FP80_GRAD_ACC15_PROFILE_TYPE2/b1s8/',
-        '~/data/ispass_v2/k002-003_MODEL_NAMEllama_USE_FSDP21_ITERS20_WAIT9_ACTIVE10_POWER_MAN0_ADJUST_STEPS3_WAIT_STEPS50_INITIAL_POWER_CAP750_REALLOC_POWER0_MAX_ADJ15_USE_SUM1_USE_LAST0_USE_MAX0_USE_GLOBAL1_POWER_BUDGET0_FP80_GRAD_ACC15_PROFILE_TYPE2/b2s8/',
-
-        '~/data/ispass_v2/k002-003_MODEL_NAMEllama_USE_FSDP20_ITERS20_WAIT9_ACTIVE10_POWER_MAN0_ADJUST_STEPS3_WAIT_STEPS50_INITIAL_POWER_CAP750_REALLOC_POWER0_MAX_ADJ15_USE_SUM1_USE_LAST0_USE_MAX0_USE_GLOBAL1_POWER_BUDGET0_FP80_GRAD_ACC15_PROFILE_TYPE2/b1s4/',
-        '~/data/ispass_v2/k002-003_MODEL_NAMEllama_USE_FSDP20_ITERS20_WAIT9_ACTIVE10_POWER_MAN0_ADJUST_STEPS3_WAIT_STEPS50_INITIAL_POWER_CAP750_REALLOC_POWER0_MAX_ADJ15_USE_SUM1_USE_LAST0_USE_MAX0_USE_GLOBAL1_POWER_BUDGET0_FP80_GRAD_ACC15_PROFILE_TYPE2/b2s4/',
-        '~/data/ispass_v2/k002-003_MODEL_NAMEllama_USE_FSDP20_ITERS20_WAIT9_ACTIVE10_POWER_MAN0_ADJUST_STEPS3_WAIT_STEPS50_INITIAL_POWER_CAP750_REALLOC_POWER0_MAX_ADJ15_USE_SUM1_USE_LAST0_USE_MAX0_USE_GLOBAL1_POWER_BUDGET0_FP80_GRAD_ACC15_PROFILE_TYPE2/b4s4/',
-        '~/data/ispass_v2/k002-003_MODEL_NAMEllama_USE_FSDP20_ITERS20_WAIT9_ACTIVE10_POWER_MAN0_ADJUST_STEPS3_WAIT_STEPS50_INITIAL_POWER_CAP750_REALLOC_POWER0_MAX_ADJ15_USE_SUM1_USE_LAST0_USE_MAX0_USE_GLOBAL1_POWER_BUDGET0_FP80_GRAD_ACC15_PROFILE_TYPE2/b1s8/',
-        '~/data/ispass_v2/k002-003_MODEL_NAMEllama_USE_FSDP20_ITERS20_WAIT9_ACTIVE10_POWER_MAN0_ADJUST_STEPS3_WAIT_STEPS50_INITIAL_POWER_CAP750_REALLOC_POWER0_MAX_ADJ15_USE_SUM1_USE_LAST0_USE_MAX0_USE_GLOBAL1_POWER_BUDGET0_FP80_GRAD_ACC15_PROFILE_TYPE2/b2s8/',
-    ),
-    frameworks: Tuple[Framework] = (
-        Framework.FSDPv2,
-        Framework.FSDPv2,
-        Framework.FSDPv2,
-        Framework.FSDPv2,
-        Framework.FSDPv2,
-
-        Framework.FSDPv1,
-        Framework.FSDPv1,
-        Framework.FSDPv1,
-        Framework.FSDPv1,
-        Framework.FSDPv1,
-    ),
-    configs: Tuple[str] = (
-        'b1s4',
-        'b2s4',
-        'b4s4',
-        'b1s8',
-        'b2s8',
-
-        'b1s4',
-        'b2s4',
-        'b4s4',
-        'b1s8',
-        'b2s8',
-    ),
+    ts_files: list[str] = ("./ts.pkl",),
+    frameworks: list[Framework] = (Framework.FSDPv2,),
+    variants: list[str] = ("default",),
 ):
     data = {
-        f"{'FSDPv2' if fw == Framework.FSDPv2 else 'FSDPv1'}-{config}": pd.read_pickle(f"{pkl_dir}/ts.pkl")
-        for fw, config, pkl_dir in zip(frameworks, configs, pkl_dirs)
+        variant: load_pickle(ts_file)
+        for ts_file, variant in zip(ts_files, variants)
     }
 
     metrics = (
-        'Launch Overhead',
-        'Prep Overhead',
-        'Call Overhead',
+        "Launch Overhead",
+        "Prep Overhead",
+        "Call Overhead",
     )
     max_ov_sub = 0
     for fw, setup in zip(frameworks, data.keys()):
-        data[setup]['layer'] = data[setup]['layer'].fillna(-1)
-        weird_mask = data[setup]['iteration'].isna()
+        data[setup]["layer"] = data[setup]["layer"].fillna(-1)
+        weird_mask = data[setup]["iteration"].isna()
         weird_df = data[setup][weird_mask]
-        max_weird_ts = weird_df['ts'].max()
-        min_norm_ts = data[setup][~weird_mask]['ts'].min()
+        max_weird_ts = weird_df["ts"].max()
+        min_norm_ts = data[setup][~weird_mask]["ts"].min()
         assert min_norm_ts > max_weird_ts, "Nan iteration isn't at the start"
         data[setup] = data[setup][~weird_mask]
 
-        data[setup] = data[setup][data[setup]['name']
-                                  != 'Memcpy HtoD (Host -> Device)']
+        data[setup] = data[setup][data[setup]["name"] != "Memcpy HtoD (Host -> Device)"]
 
         data[setup] = assign_chunks(data[setup])
-        nan_chunk_mask = data[setup]['chunk'].isna()
+        nan_chunk_mask = data[setup]["chunk"].isna()
 
         data[setup] = fix_names(data[setup])
 
@@ -123,28 +92,23 @@ def get_data(
 
         data[setup] = agg(
             data[setup][overlap_mask & ~nan_chunk_mask],
-            ['gpu', 'chunk', 'iteration', 'operator-name', 'layer'],
+            ["gpu", "chunk", "iteration", "operator-name", "layer"],
             derive_cols_before=(
                 derive_launch_overhead,
                 derive_prep_overhead,
                 derive_call_overhead,
             ),
-            sum_cols_map={metric: ['sum'] for metric in metrics}
+            sum_cols_map={metric: ["sum"] for metric in metrics},
         )
-        gb_sub = data[setup][~data[setup]['operator-name'].isin(
-            ('f_ie', 'b_ga', 'opt_step'))].groupby('operator-name')
-        max_ov_sub = max(max_ov_sub, np.max(gb_sub['Launch Overhead'].mean()))
+        gb_sub = data[setup][
+            ~data[setup]["operator-name"].isin(("f_ie", "b_ga", "opt_step"))
+        ].groupby("operator-name")
+        max_ov_sub = max(max_ov_sub, np.max(gb_sub["Launch Overhead"].mean()))
 
     for setup in data.keys():
-        data[setup]['Call Overhead'] /= max_ov_sub
-        data[setup]['Prep Overhead'] /= max_ov_sub
-        data[setup]['Launch Overhead'] /= max_ov_sub
-        # k = 7
-        # for metric in metrics:
-        #     print('-'*5 + setup + '-'*5)
-        #     print(data[setup].groupby('operator-name')
-        #           [metric].mean().nlargest(k))
-        #     print('-'*(10+len(setup)))
+        data[setup]["Call Overhead"] /= max_ov_sub
+        data[setup]["Prep Overhead"] /= max_ov_sub
+        data[setup]["Launch Overhead"] /= max_ov_sub
 
     return data
 
@@ -152,48 +116,43 @@ def get_data(
 def draw(
     fig: Figure,
     input_data,
-    lops: Tuple[str] = (
-        'f_ie',
-        'b_ga',
-        'opt_step',
+    lops: list[str] = (
+        "f_ie",
+        "b_ga",
+        "opt_step",
     ),
-    rops: Tuple[str] = (
-        'f_attn_n',
-        'b_mlp_dp',
-        'b_ie',
+    rops: list[str] = (
+        "f_attn_n",
+        "b_mlp_dp",
+        "b_ie",
     ),
     two_axes: bool = True,
 ):
     data = input_data
     ops = lops + rops
     rgb_colors = (
-        rgb(0x66, 0xc2, 0xa5),
-        rgb(0xfc, 0x8d, 0x62),
+        rgb(0x66, 0xC2, 0xA5),
+        rgb(0xFC, 0x8D, 0x62),
     )
 
     hatches = (
         None,
-        '\\\\\\\\\\',
+        "\\\\\\\\\\",
     )
 
     setups = tuple(data.keys())
-    params = sorted(set(s.split('-')[1] for s in setups),
-                    key=lambda x: re.findall(r'\d+', x)[::-1])
-    variants = sorted(set(s.split('-')[0] for s in setups))
+    params = sorted(
+        set(s.split("-")[1] for s in setups), key=lambda x: re.findall(r"\d+", x)[::-1]
+    )
+    variants = sorted(set(s.split("-")[0] for s in setups))
 
     metrics = (
-        'Prep Overhead',
-        'Call Overhead',
+        "Prep Overhead",
+        "Call Overhead",
     )
 
-    bar_color = {
-        m: rgb_colors[i]
-        for i, m in enumerate(metrics)
-    }
-    bar_hatch = {
-        m: hatches[i]
-        for i, m in enumerate(variants)
-    }
+    bar_color = {m: rgb_colors[i] for i, m in enumerate(metrics)}
+    bar_hatch = {m: hatches[i] for i, m in enumerate(variants)}
 
     n_rows = 1
     n_cols = len(ops) + (1 if two_axes else 0)
@@ -201,19 +160,21 @@ def draw(
     x = np.arange(len(params))
     fig.clear()
     width_ratios = (
-        (tuple(1 for _ in range(len(lops))) + (.1,) +
-         tuple(1 for _ in range(len(rops)))) if two_axes else
-        (tuple(1 for _ in range(len(ops))))
-
+        (
+            tuple(1 for _ in range(len(lops)))
+            + (0.1,)
+            + tuple(1 for _ in range(len(rops)))
+        )
+        if two_axes
+        else (tuple(1 for _ in range(len(ops))))
     )
-    gs = fig.add_gridspec(n_rows, n_cols,
-                          width_ratios=width_ratios)
+    gs = fig.add_gridspec(n_rows, n_cols, width_ratios=width_ratios)
     axs = [fig.add_subplot(gs[0, i]) for i in range(n_cols)]
 
     ax_idxs = (
-        list(tuple(range(len(lops))) + tuple(range(len(lops)+1, n_cols)))
-        if two_axes else
-        list(tuple(range(0, n_cols)))
+        list(tuple(range(len(lops))) + tuple(range(len(lops) + 1, n_cols)))
+        if two_axes
+        else list(tuple(range(0, n_cols)))
     )
     g_ymin = None
     g_ymax = None
@@ -221,31 +182,38 @@ def draw(
         axs[len(lops)].set_visible(False)
 
     for s in setups:
-        variant = s.split('-')[0]
+        variant = s.split("-")[0]
         for ax_idx in ax_idxs:
             ax = axs[ax_idx]
             ax.yaxis.set_major_locator(MaxNLocator(integer=True, nbins=3))
-            ax.spines['top'].set_visible(False)
+            ax.spines["top"].set_visible(False)
             if ax_idx == ax_idxs[0]:
                 ax.set_ylabel("norm time", labelpad=0)
-                ax.spines['right'].set_visible(False)
+                ax.spines["right"].set_visible(False)
             elif two_axes and ax_idx == ax_idxs[len(lops)]:
-                ax.spines['right'].set_visible(False)
+                ax.spines["right"].set_visible(False)
                 ax.set_yticklabels([])
-                ax.tick_params(axis='y', length=0)
+                ax.tick_params(axis="y", length=0)
             elif ax_idx == ax_idxs[-1]:
-                ax.spines['left'].set_visible(False)
+                ax.spines["left"].set_visible(False)
                 ax.yaxis.set_label_position("right")
-                ax.tick_params(axis='y', which='both', left=False,
-                               right=True, labelright=True, labelleft=False, pad=1)
+                ax.tick_params(
+                    axis="y",
+                    which="both",
+                    left=False,
+                    right=True,
+                    labelright=True,
+                    labelleft=False,
+                    pad=1,
+                )
                 ax.set_ylabel("norm time", labelpad=0)
             else:
-                ax.spines['left'].set_visible(False)
-                ax.spines['right'].set_visible(False)
+                ax.spines["left"].set_visible(False)
+                ax.spines["right"].set_visible(False)
                 ax.set_yticklabels([])
-                ax.tick_params(axis='y', length=0)
+                ax.tick_params(axis="y", length=0)
 
-            if two_axes and ax_idx >= len(lops)+1:
+            if two_axes and ax_idx >= len(lops) + 1:
                 ax.set_ylim((0, 1.1))
             else:
                 _ymin, _ymax = ax.get_ylim()
@@ -259,71 +227,75 @@ def draw(
                     g_ymax = max(g_ymax, _ymax)
 
             ax.set_xticks(x)
-            ax.tick_params(axis='y', which='major', pad=1)
-            ax.tick_params(axis='x', which='major', pad=1, rotation=65)
+            ax.tick_params(axis="y", which="major", pad=1)
+            ax.tick_params(axis="x", which="major", pad=1, rotation=65)
             ax.set_xticklabels(params)
-            ax.set_xlim(-.5, len(params)-1+.5)
+            ax.set_xlim(-0.5, len(params) - 1 + 0.5)
             bar_width = 0.9 / len(variants)
-            offset = (
-                -bar_width/2 *
-                (len(variants)-1) +
-                bar_width*variants.index(variant))
-            ax.grid(axis="y", linestyle='--', alpha=.5)
+            offset = -bar_width / 2 * (len(variants) - 1) + bar_width * variants.index(
+                variant
+            )
+            ax.grid(axis="y", linestyle="--", alpha=0.5)
 
             bottom = 0
 
-            param = s.split('-')[1]
+            param = s.split("-")[1]
 
             op = ops[ax_idxs.index(ax_idx)]
             ax.set_title(op, pad=5, fontsize=8)
-            med_p = (data[s].groupby(
-                'operator-name').get_group(op)['Prep Overhead'].mean())
-            med_c = (data[s].groupby(
-                'operator-name').get_group(op)['Call Overhead'].mean())
+            med_p = (
+                data[s].groupby("operator-name").get_group(op)["Prep Overhead"].mean()
+            )
+            med_c = (
+                data[s].groupby("operator-name").get_group(op)["Call Overhead"].mean()
+            )
 
             tick = params.index(param)
 
             ax.bar(
-                tick+offset,
+                tick + offset,
                 med_c,
-                width=bar_width*.9,
+                width=bar_width * 0.9,
                 bottom=bottom,
-                color=bar_color['Call Overhead'],
-                alpha=.99,
+                color=bar_color["Call Overhead"],
+                alpha=0.99,
                 hatch=bar_hatch[variant],
             )
 
             bottom += med_c
 
             ax.bar(
-                tick+offset,
+                tick + offset,
                 med_p,
-                width=bar_width*.9,
+                width=bar_width * 0.9,
                 bottom=bottom,
-                color=bar_color['Prep Overhead'],
-                alpha=.99,
+                color=bar_color["Prep Overhead"],
+                alpha=0.99,
                 hatch=bar_hatch[variant],
             )
 
     legend_handles = [
-        mpatches.Patch(
-            color=bar_color[m], label=m)
-        for m in reversed(metrics)
+        mpatches.Patch(color=bar_color[m], label=m) for m in reversed(metrics)
     ]
-    legend_handles.extend([
-        mpatches.Patch(
-            facecolor='white', edgecolor='black', label=m, hatch=bar_hatch[m],
-        )
-        for m in variants
-    ])
+    legend_handles.extend(
+        [
+            mpatches.Patch(
+                facecolor="white",
+                edgecolor="black",
+                label=m,
+                hatch=bar_hatch[m],
+            )
+            for m in variants
+        ]
+    )
 
     if two_axes:
         for i in range(len(lops)):
             axs[i].set_ylim((g_ymin, g_ymax))
 
     if two_axes:
-        axl = axs[len(lops)-1]
-        axr = axs[len(lops)+1]
+        axl = axs[len(lops) - 1]
+        axr = axs[len(lops) + 1]
 
         posl = axl.get_position()
         posr = axr.get_position()
@@ -338,15 +310,17 @@ def draw(
         yl_fig = posl.y0 + yl_axes * posl.height
         yr_fig = posr.y0 + yr_axes * posr.height
 
-        fig.add_artist(Line2D(
-            [posl.x1, posr.x0],
-            [yl_fig, yr_fig],
-            transform=fig.transFigure,
-            color=rcParams['grid.color'],
-            linewidth=rcParams['grid.linewidth'],
-            linestyle='--',
-            alpha=0.5
-        ))
+        fig.add_artist(
+            Line2D(
+                [posl.x1, posr.x0],
+                [yl_fig, yr_fig],
+                transform=fig.transFigure,
+                color=rcParams["grid.color"],
+                linewidth=rcParams["grid.linewidth"],
+                linestyle="--",
+                alpha=0.5,
+            )
+        )
 
     fig.legend(
         handles=legend_handles,

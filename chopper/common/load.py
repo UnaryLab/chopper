@@ -1,8 +1,9 @@
 import pandas as pd
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict
 import chopper
 
 from chopper.common.annotations import Framework
+from chopper.common.cache import load_pickle
 
 
 def select_iters(df: pd.DataFrame, iters: List) -> pd.DataFrame:
@@ -20,11 +21,11 @@ def get_df(
     remove_overlap: bool = False,
     fix_names: bool = False,
     group_arr: Optional[List] = None,
-    group_map: Optional[Dict[str, Tuple[str, str]]] = None,
+    group_map: Optional[Dict[str, list[str, str]]] = None,
     sort_value: Optional[str] = None,
     framework: Framework = Framework.FSDPv1,
 ) -> pd.DataFrame:
-    df = pd.read_pickle(fn)
+    df = load_pickle(fn)
     df['layer'] = df['layer'].fillna(-1)
     df = df[df['name'] != 'Memcpy HtoD (Host -> Device)']
 
