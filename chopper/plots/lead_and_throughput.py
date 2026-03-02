@@ -1,8 +1,7 @@
 from chopper.common.load import get_straggler_df
 from chopper.common.colors import okabe_ito
 from chopper.common.printing import info
-from chopper.common.annotations import Framework
-from chopper.common.cache import load_pickle
+from chopper.common.annotations import Framework, PaperMode
 import matplotlib.patches as mpatches
 from matplotlib.ticker import MaxNLocator
 from matplotlib.ticker import FormatStrFormatter
@@ -50,13 +49,14 @@ def draw(
     wait_steps: int = 50,
     y_max: float = float("inf"),
     y_min: float = float("-inf"),
+    paper_mode: PaperMode = PaperMode(),
 ):
     """Draw normalized lead and throughput over iterations.
-    
+
     Creates a dual-axis plot showing straggler lead (performance imbalance)
     and normalized throughput across training iterations. Highlights
     pre-adjustment and post-adjustment phases.
-    
+
     Args:
         fig: Matplotlib Figure object to draw on
         input_data: Tuple from get_data() containing straggler DataFrames
@@ -65,6 +65,7 @@ def draw(
         wait_steps: Number of warmup steps before adjustment
         y_max: Maximum y-axis limit
         y_min: Minimum y-axis limit
+        paper_mode: PaperMode settings for publication-quality figures
     """
 
     dfs, variants = input_data
@@ -73,6 +74,16 @@ def draw(
     n_cols = len(variants)
 
     fig.clear()
+    fig.patches.clear()  # Ensure figure-level patches are also cleared
+
+    # Apply layout adjustments only in paper mode
+    if paper_mode.enabled:
+        fig.subplots_adjust(
+            left=paper_mode.left, right=paper_mode.right,
+            bottom=paper_mode.bottom, top=paper_mode.top,
+            wspace=paper_mode.wspace, hspace=paper_mode.hspace
+        )
+
     axs = tuple(
         tuple(
             fig.add_subplot(n_rows, n_cols, i * n_cols + j + 1) for j in range(n_cols)
@@ -256,7 +267,19 @@ def draw(
             axs[row][col].tick_params(axis="x", length=0)
             axs[row][col].set_xticklabels([])
 
-    axs[n_rows - 1][n_cols // 2].set_xlabel("iteration sample", labelpad=0)
+    # Center xlabel across all columns
+    fig.text(0.5, 0.01, "iteration sample", ha="center", va="bottom")
+
+    # Add border around figure in paper mode (removed when saving)
+    if paper_mode.enabled:
+        fig.patches.append(mpatches.Rectangle(
+            (0, 0), 1, 1,
+            transform=fig.transFigure,
+            fill=False,
+            edgecolor="black",
+            linewidth=1,
+            zorder=1000,
+        ))
 
     legend_handles = [
         mpatches.Patch(color=color_dict[metric], label=metric, alpha=alpha_dict[metric])

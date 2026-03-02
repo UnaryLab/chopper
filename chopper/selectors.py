@@ -16,10 +16,11 @@ from PyQt6.QtWidgets import (
     QMenu,
     QLineEdit,
     QFileDialog,
+    QGroupBox,
 )
 from PyQt6.QtCore import Qt
 
-from chopper.common.annotations import Framework
+from chopper.common.annotations import Framework, PaperMode
 
 
 class PlotSelection(QWidget):
@@ -482,3 +483,94 @@ class FloatSelection(QWidget):
 
     def get_selections(self):
         return self.name, float(self.line_edit.text())
+
+
+class PaperModeSelection(QWidget):
+    """Collapsible widget for paper mode settings.
+
+    Provides a checkable group box that expands to show paper-specific
+    layout parameters when enabled.
+
+    Attributes:
+        name: Parameter name
+        ann: Type annotation string
+        group_box: Collapsible QGroupBox containing settings
+    """
+    def __init__(self, val: PaperMode, name: str, ann, parent=None):
+        super().__init__(parent)
+
+        self.name = name
+        self.ann = ann
+
+        self.group_box = QGroupBox("paper_mode")
+        self.group_box.setCheckable(True)
+        self.group_box.setChecked(val.enabled)
+
+        # Create input fields for each parameter
+        self.left_edit = QLineEdit(str(val.left))
+        self.right_edit = QLineEdit(str(val.right))
+        self.bottom_edit = QLineEdit(str(val.bottom))
+        self.top_edit = QLineEdit(str(val.top))
+        self.wspace_edit = QLineEdit(str(val.wspace))
+        self.hspace_edit = QLineEdit(str(val.hspace))
+        self.ncol_edit = QLineEdit(str(val.ncol))
+        self.figsize_ratio_edit = QLineEdit(str(val.figsize_ratio))
+
+        # Layout for the group box contents
+        group_layout = QVBoxLayout()
+
+        # Add labeled fields
+        for label_text, edit in [
+            ("left", self.left_edit),
+            ("right", self.right_edit),
+            ("bottom", self.bottom_edit),
+            ("top", self.top_edit),
+            ("wspace", self.wspace_edit),
+            ("hspace", self.hspace_edit),
+            ("ncol", self.ncol_edit),
+            ("figsize_ratio", self.figsize_ratio_edit),
+        ]:
+            row = QHBoxLayout()
+            row.addWidget(QLabel(label_text))
+            row.addWidget(edit)
+            group_layout.addLayout(row)
+
+        self.group_box.setLayout(group_layout)
+
+        # Toggle visibility of contents based on checkbox state
+        self.toggle_contents(val.enabled)
+        self.group_box.toggled.connect(self.toggle_contents)
+
+        layout = QVBoxLayout()
+        layout.addWidget(self.group_box)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.setLayout(layout)
+
+    def toggle_contents(self, checked: bool) -> None:
+        """Show/hide the group box contents based on checked state."""
+        group_layout = self.group_box.layout()
+        assert group_layout is not None
+        for i in range(group_layout.count()):
+            item = group_layout.itemAt(i)
+            assert item is not None
+            inner_layout = item.layout()
+            if inner_layout is not None:
+                for j in range(inner_layout.count()):
+                    inner_item = inner_layout.itemAt(j)
+                    assert inner_item is not None
+                    widget = inner_item.widget()
+                    if widget:
+                        widget.setVisible(checked)
+
+    def get_selections(self):
+        return self.name, PaperMode(
+            enabled=self.group_box.isChecked(),
+            left=float(self.left_edit.text()),
+            right=float(self.right_edit.text()),
+            bottom=float(self.bottom_edit.text()),
+            top=float(self.top_edit.text()),
+            wspace=float(self.wspace_edit.text()),
+            hspace=float(self.hspace_edit.text()),
+            ncol=int(self.ncol_edit.text()),
+            figsize_ratio=float(self.figsize_ratio_edit.text()),
+        )

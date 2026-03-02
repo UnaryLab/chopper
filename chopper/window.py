@@ -35,7 +35,7 @@ from matplotlib.figure import Figure
 
 import chopper.plots
 
-from chopper.common.annotations import Framework
+from chopper.common.annotations import Framework, PaperMode
 from chopper.selectors import (
     PlotSelection,
     FrameworkSelection,
@@ -46,6 +46,7 @@ from chopper.selectors import (
     StrlistSelection,
     IntlistSelection,
     FloatlistSelection,
+    PaperModeSelection,
 )
 
 import importlib
@@ -206,10 +207,10 @@ class LoadDataThread(QThread):
 
 class MatplotlibWidget(QWidget):
     """Qt widget for embedding matplotlib figures.
-    
+
     Provides a canvas for displaying matplotlib plots with toolbar integration
     for zoom, pan, and save functionality.
-    
+
     Attributes:
         figure: Matplotlib Figure object
         canvas: Qt canvas for rendering the figure
@@ -260,8 +261,12 @@ class MatplotlibWidget(QWidget):
         self.draw_button = QPushButton("redraw plot")
         self.draw_button.clicked.connect(self.draw_plot)
         self.draw_button.setDisabled(True)
+        self.save_button = QPushButton("save figure")
+        self.save_button.clicked.connect(self.save_figure)
+        self.save_button.setDisabled(True)
         refresh_layout.addWidget(self.data_button)
         refresh_layout.addWidget(self.draw_button)
+        refresh_layout.addWidget(self.save_button)
 
         layout.addLayout(refresh_layout)
         self.plot_modules = tuple(
@@ -291,10 +296,12 @@ class MatplotlibWidget(QWidget):
             self.data_button.setEnabled(False)
             self.data_button.setText("loading...")
             self.draw_button.setEnabled(False)
+            self.save_button.setEnabled(False)
         else:
             self.data_button.setEnabled(True)
             self.data_button.setText("load data")
             self.draw_button.setEnabled(self.plot in self.plot_data)
+            self.save_button.setEnabled(self.plot in self.plot_data)
         self.plot_selection.reload_button.setEnabled(True)
 
         data_sig = inspect.signature(self.plot.get_data)
@@ -313,6 +320,7 @@ class MatplotlibWidget(QWidget):
             inspect.formatannotation(str): StrSelection,
             inspect.formatannotation(int): IntSelection,
             inspect.formatannotation(float): FloatSelection,
+            inspect.formatannotation(PaperMode): PaperModeSelection,
         }
 
         plot_data_slot = self.data_selections.setdefault(self.plot, {})
@@ -357,6 +365,7 @@ class MatplotlibWidget(QWidget):
         # Only update UI if we're still on the same plot
         if loaded_plot == self.plot:
             self.draw_button.setEnabled(True)
+            self.save_button.setEnabled(True)
             self.data_button.setEnabled(True)
             self.data_button.setText("load data")
         self.save_cache()
@@ -382,30 +391,30 @@ class MatplotlibWidget(QWidget):
 
             self.draw_selections[self.plot] = self.selections.get_draw_sels()
 
-            # Check if paper mode is enabled
-            paper_mode = self.draw_selections[self.plot].get('paper_mode', False)
+            # Check if paper mode is enabled (now a PaperMode dataclass)
+            paper_mode = self.draw_selections[self.plot].get('paper_mode', None)
 
-            if paper_mode:
+            if paper_mode is not None and paper_mode.enabled:
                 # Apply paper-specific rcParams
                 import matplotlib.pyplot as plt
-                import matplotlib
 
                 plt.rcParams['font.family'] = 'Gill Sans'
                 plt.rcParams['font.size'] = 8
                 plt.rcParams['axes.labelsize'] = 8
+                plt.rcParams['axes.titlesize'] = 8
+                plt.rcParams['xtick.labelsize'] = 8
+                plt.rcParams['ytick.labelsize'] = 8
+                plt.rcParams['legend.fontsize'] = 8
+                plt.rcParams['figure.titlesize'] = 8
                 plt.rcParams['hatch.color'] = 'black'
                 plt.rcParams['hatch.linewidth'] = 0.5
                 plt.rcParams['mathtext.default'] = 'regular'
                 plt.rcParams['mathtext.fontset'] = 'cm'
 
                 # Calculate figure size based on paper column width
-                width_pt = 243.91125
-                ncol = self.draw_selections[self.plot].get('ncol', 2)
-                figsize_ratio = self.draw_selections[self.plot].get('figsize_ratio', 1.0)
-
-                width_pt *= ncol
+                width_pt = 243.91125 * paper_mode.ncol
                 width_in = width_pt / 72.27
-                height_in = width_in * figsize_ratio
+                height_in = width_in * paper_mode.figsize_ratio
                 figsize = (width_in, height_in)
 
                 # Recreate figure with proper size
@@ -423,6 +432,39 @@ class MatplotlibWidget(QWidget):
             error_msg.setIcon(QMessageBox.Icon.Critical)
             error_msg.setWindowTitle("Error Drawing Plot")
             error_msg.setText(f"Failed to draw plot: {type(e).__name__}")
+            error_msg.setDetailedText(str(e))
+            error_msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+            error_msg.exec()
+
+    def save_figure(self):
+        """Save figure at 300 DPI without the paper mode border."""
+        try:
+            # Get save path from user
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save Figure",
+                "",
+                "PNG Files (*.png);;PDF Files (*.pdf);;SVG Files (*.svg);;All Files (*)",
+            )
+            if not path:
+                return
+
+            # Temporarily remove paper mode border patches
+            saved_patches = list(self.figure.patches)
+            self.figure.patches.clear()
+
+            # Save at 300 DPI
+            self.figure.savefig(path, dpi=300, bbox_inches="tight")
+
+            # Restore patches
+            self.figure.patches.extend(saved_patches)
+            self.canvas.draw()
+
+        except Exception as e:
+            error_msg = QMessageBox(self)
+            error_msg.setIcon(QMessageBox.Icon.Critical)
+            error_msg.setWindowTitle("Error Saving Figure")
+            error_msg.setText(f"Failed to save figure: {type(e).__name__}")
             error_msg.setDetailedText(str(e))
             error_msg.setStandardButtons(QMessageBox.StandardButton.Ok)
             error_msg.exec()

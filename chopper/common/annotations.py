@@ -1,5 +1,32 @@
 import enum
+from dataclasses import dataclass
 from pandas import DataFrame, Series
+
+
+@dataclass
+class PaperMode:
+    """Paper mode settings for publication-quality figures.
+
+    Attributes:
+        enabled: Whether paper mode is enabled
+        left: Left margin for subplot adjustment
+        right: Right margin for subplot adjustment
+        bottom: Bottom margin for subplot adjustment
+        top: Top margin for subplot adjustment
+        wspace: Width spacing between subplots
+        hspace: Height spacing between subplots
+        ncol: Number of paper columns (width multiplier)
+        figsize_ratio: Height/width ratio for figure sizing
+    """
+    enabled: bool = False
+    left: float = 0.1
+    right: float = 0.9
+    bottom: float = 0.1
+    top: float = 0.9
+    wspace: float = 0.2
+    hspace: float = 0.3
+    ncol: int = 1
+    figsize_ratio: float = 1.0
 
 
 class Framework(enum.Enum):
