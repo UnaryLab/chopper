@@ -38,4 +38,5 @@ python -m tests
 
 ## Related projects
 - [HolisticTraceAnalysis](https://github.com/facebookresearch/HolisticTraceAnalysis)
-- [rocm-systems](https://github.com/ROCm/rocm-systems/tree/0e04fdd57165029fcf6d9226d22cf5d3e5370b74)
+- [TraceLens](https://github.com/AMD-AGI/TraceLens)
+- [rocprofiler-compute](https://github.com/ROCm/rocm-systems/tree/0e04fdd57165029fcf6d9226d22cf5d3e5370b74/projects/rocprofiler-compute)
