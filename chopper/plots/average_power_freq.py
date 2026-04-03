@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import pandas as pd
+import fire
 import numpy as np
 import matplotlib.patches as mpatches
 from chopper.common.colors import rgb
@@ -37,6 +38,8 @@ def draw(
     input_data,
     starts: list[float] = [0.0],
     stops: list[float] = [1.0],
+    ymaxs: list[float] = [float('inf')],
+    ymins: list[float] = [float('-inf')],
     per_variant_norm: bool = False,
     paper_mode: PaperMode = PaperMode(),
 ):
@@ -198,11 +201,19 @@ def draw(
 
     # Apply y-limits
     for vi, variant in enumerate(variants):
-        for metric in metrics:
+        for mi, metric in enumerate(metrics):
             gmin = gymin[metric]
             gmax = gymax[metric]
             assert gmin is not None and gmax is not None
-            axs[metrics.index(metric)][vi].set_ylim((gmin, gmax))
+            if len(ymaxs) == len(metrics) and ymaxs[mi] != float('inf'):
+                gmax_ = ymaxs[mi]
+            else:
+                gmax_ = gmax
+            if len(ymins) == len(metrics) and ymins[mi] != float('inf'):
+                gmin_ = ymins[mi]
+            else:
+                gmin_ = gmin
+            axs[metrics.index(metric)][vi].set_ylim((gmin_, gmax_))
             axs[metrics.index(metric)][vi].tick_params(axis='x', pad=1)
 
     # Set variant titles on second row (between 1st and 2nd row)
@@ -270,3 +281,21 @@ def draw(
             linewidth=1,
             zorder=1000,
         ))
+
+def main(
+    gpu_files: list[str] = ["./gpu.pkl"],
+    variants: list[str] = ["default"],
+    starts: list[float] = [0.0],
+    stops: list[float] = [1.0],
+    ymaxs: list[float] = [float('inf')],
+    ymins: list[float] = [float('-inf')],
+    per_variant_norm: bool = False,
+    filename: str = "average_power_frequency.png"
+):
+    fig = Figure()
+    input_data = get_data(gpu_files, variants)
+    draw(fig, input_data, starts, stops, ymaxs, ymins, per_variant_norm, PaperMode())
+    fig.savefig(filename, dpi=300)
+
+if __name__ == "__main__":
+    fire.Fire(main)

@@ -1,3 +1,4 @@
+import os
 from time import monotonic_ns
 import pandas as pd
 from amdsmi import (
@@ -40,6 +41,7 @@ def _main(
                 pause_ts = monotonic_ns() + int(on * 1e9)
 
         df = pd.DataFrame(results)
+        os.makedirs(outdir, exist_ok=True)
         df.to_pickle(f"{outdir}/{filename}")
     except AmdSmiException as e:
         print(e)

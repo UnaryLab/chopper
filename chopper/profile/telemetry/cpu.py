@@ -1,13 +1,15 @@
+import os
 from time import monotonic_ns
 from time import sleep
 import psutil
 import pandas as pd
-from multiprocessing.sharedctypes import Synchronized
+# from multiprocessing.sharedctypes import Synchronized
 from typing import Any
 
 
 def main(
-    stop: Synchronized[bool],
+    # stop: Synchronized[bool],
+    stop,
     filename: str = 'cpu.pkl',
     outdir: str = '.',
     on: float = 0.0,
@@ -47,4 +49,5 @@ def main(
             sleep(off)
             pause_ts = monotonic_ns() + int(on * 1e9)
 
+    os.makedirs(outdir, exist_ok=True)
     pd.DataFrame(results).to_pickle(f"{outdir}/{filename}")

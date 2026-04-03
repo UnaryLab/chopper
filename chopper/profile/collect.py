@@ -10,6 +10,12 @@ from chopper.profile.runner import Runner
 
 
 def main(program,
+         counter_names,
+         outdir,
+         container,
+         nvidia,
+         cpu_telemetry,
+         gpu_telemetry):
     """Collect profiling data during program execution.
     
     Starts telemetry collection threads and runs the target program
@@ -27,12 +33,6 @@ def main(program,
     Returns:
         Exit code (0 for success, -1 for errors)
     """
-         counter_names,
-         outdir,
-         container,
-         nvidia,
-         cpu_telemetry,
-         gpu_telemetry):
     if len(program) == 0:
         print("Please pass a program to run")
         return -1
