@@ -324,3 +324,38 @@ def draw(
 
     for ci in range(n_cols):
         axs[n_rows - 1][ci].tick_params(axis="x", pad=1)
+
+def main(
+    gpu_files: list[str] = ["./gpu.pkl"],
+    variants: list[str] = ["FSDPv2"],
+    show_gpus: bool = False,
+    alpha: float = 1.0,
+    s: float = 0.5,
+    starts: list[float] = [0.0],
+    stops: list[float] = [1.0],
+    metrics: list[str] = [
+        "current_gfxclk",
+        "current_uclk",
+        "current_socket_power",
+    ],
+    metric_y_max: list[float] = [
+        float("inf"),
+        float("inf"),
+        float("inf"),
+    ],
+    metric_y_min: list[float] = [
+        float("-inf"),
+        float("-inf"),
+        float("-inf"),
+    ],
+    per_variant_norm: bool = False,
+    filename: str = "freq_pow.png",
+):
+    fig = Figure()
+    input_data = get_data(gpu_files, variants)
+    draw(fig, input_data, show_gpus, alpha, s, starts, stops, metrics, metric_y_max, metric_y_min, per_variant_norm, PaperMode())
+    fig.savefig(filename, dpi=300)
+
+if __name__ == "__main__":
+    import fire
+    fire.Fire(main)

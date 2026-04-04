@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import pandas as pd
-import fire
 import numpy as np
 import matplotlib.patches as mpatches
 from chopper.common.colors import rgb
@@ -298,4 +297,5 @@ def main(
     fig.savefig(filename, dpi=300)
 
 if __name__ == "__main__":
+    import fire
     fire.Fire(main)
