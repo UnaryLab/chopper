@@ -296,3 +296,26 @@ def draw(
         handlelength=0.5,
         frameon=False,
     )
+
+def main(
+    ts_files: list[str] = ["./ts.pkl"],
+    variants: list[str] = ["default"],
+    frameworks: list[Framework] = [Framework.FSDPv2],
+    use_elapsed: bool = False,
+    adjust_steps: int = 3,
+    wait_steps: int = 50,
+    y_max: float = float("inf"),
+    y_min: float = float("-inf"),
+    paper_mode: PaperMode = PaperMode(),
+    filename: str = "lead_and_throughput.png",
+):
+    fig = Figure()
+    input_data = get_data(ts_files, variants, frameworks)
+    draw(fig, input_data, use_elapsed, adjust_steps, wait_steps, y_max, y_min, paper_mode)
+
+    fig.savefig(filename, dpi=300)
+
+
+if __name__ == "__main__":
+    import fire
+    fire.Fire(main)

@@ -29,15 +29,15 @@ class PaperMode:
     figsize_ratio: float = 1.0
 
 
-class Framework(enum.Enum):
+class Framework(enum.IntEnum):
     """Training framework enumeration for trace processing.
     
     Attributes:
         FSDPv1: PyTorch FSDP version 1
         FSDPv2: PyTorch FSDP version 2
     """
-    FSDPv1 = enum.auto()
-    FSDPv2 = enum.auto()
+    FSDPv1 = 1
+    FSDPv2 = 2
 
 
 def no_overlap_mask(df: DataFrame, framework: Framework = Framework.FSDPv1) -> Series:
