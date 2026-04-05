@@ -95,6 +95,21 @@ def draw(
     gymax0: float | None = None
     gymin1: float | None = None
     gymax1: float | None = None
+
+    # Compute global max lead across all variants
+    global_max_lead = 0.0
+    for df in dfs:
+        total_lead_df = (
+            df.groupby(["gpu", "iteration"])
+            .agg(
+                **{
+                    "total_lead": ("s-value", "sum"),
+                }
+            )
+            .reset_index()
+        )
+        global_max_lead = max(global_max_lead, total_lead_df["total_lead"].max())
+
     for df, variant in zip(dfs, variants):
         info(f"Drawing: {variant}")
 
@@ -196,10 +211,9 @@ def draw(
             alpha=alpha_dict["PostAdj"],
             zorder=1,
         )
-        max_total_lead = total_lead_df["total_lead"].max()
         ax0.scatter(
             total_lead_df["index"],
-            total_lead_df["total_lead"] / max_total_lead,
+            total_lead_df["total_lead"] / global_max_lead,
             color=okabe_ito["Black"],
             alpha=1.0,
             s=0.1,

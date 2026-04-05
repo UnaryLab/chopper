@@ -3,10 +3,10 @@
 import pandas as pd
 from chopper.common.load import get_straggler_df
 from chopper.common.colors import okabe_ito
-from chopper.common.cache import load_pickle
 from matplotlib.ticker import MaxNLocator
 from matplotlib.figure import Figure
-from chopper.common.annotations import Framework
+from chopper.common.annotations import Framework, PaperMode
+import matplotlib.patches as mpatches
 
 
 def get_data(
@@ -43,23 +43,26 @@ def draw(
     input_data,
     idx_start: int = 0,
     idx_end: int = -1,
-    y_max: float = float("inf"),
-    y_min: float = float("-inf"),
-    alpha: float = 1.0,
+    y_maxs: list[float] = [float("inf")],
+    y_mins: list[float] = [float("-inf")],
+    alpha: float = 0.025,
+    s: float = 0.1,
+    paper_mode: PaperMode = PaperMode(),
 ):
     """Draw per-GPU straggler lead over kernel samples.
-    
+
     Creates a multi-panel scatter plot showing straggler lead for each GPU
     individually. Alternating iterations are shaded for visual clarity.
-    
+
     Args:
         fig: Matplotlib Figure object to draw on
         input_data: Tuple from get_data() containing straggler DataFrames
         idx_start: Starting iteration index
         idx_end: Ending iteration index (-1 for last)
-        y_max: Maximum y-axis limit
-        y_min: Minimum y-axis limit
+        y_maxs: List of maximum y-axis limits, one per row (variant)
+        y_mins: List of minimum y-axis limits, one per row (variant)
         alpha: Transparency of scatter points (0-1)
+        paper_mode: PaperMode settings for publication-quality figures
     """
 
     dfs, variants = input_data
@@ -78,6 +81,16 @@ def draw(
     assert n_cols is not None, "n_cols should not be None"
 
     fig.clear()
+    fig.patches.clear()
+
+    # Apply layout adjustments only in paper mode
+    if paper_mode.enabled:
+        fig.subplots_adjust(
+            left=paper_mode.left, right=paper_mode.right,
+            bottom=paper_mode.bottom, top=paper_mode.top,
+            wspace=paper_mode.wspace, hspace=paper_mode.hspace
+        )
+
     axs = tuple(
         tuple(
             fig.add_subplot(n_rows, n_cols, i * n_cols + j + 1) for j in range(n_cols)
@@ -135,11 +148,11 @@ def draw(
 
             ax.scatter(
                 tmp_df_["index"],
-                # tmp_df_['s-value'] / max_lead,
-                tmp_df_["s-value"],
+                tmp_df_['s-value'] / max_lead,
+                # tmp_df_["s-value"],
                 color=color_dict["Lead"],
                 alpha=alpha,
-                s=0.1,
+                s=s,
             )
 
             ymin, ymax = ax.get_ylim()
@@ -157,14 +170,44 @@ def draw(
                     fontsize=8,
                 )
 
+    # Apply y-axis limits per row
+    for i in range(n_rows):
+        # Get y_min/y_max for this row, defaulting to last value if list is shorter
+        row_y_min = y_mins[i] if i < len(y_mins) else y_mins[-1]
+        row_y_max = y_maxs[i] if i < len(y_maxs) else y_maxs[-1]
+
         for gpu in range(n_gpus):
-            if y_min != float("-inf") and y_max != float("inf"):
-                axs[i][gpu].set_ylim((y_min, y_max))
+            ax = axs[i][gpu]
+            if row_y_min != float("-inf") and row_y_max != float("inf"):
+                ax.set_ylim((row_y_min, row_y_max))
             else:
-                axs[i][gpu].set_ylim((gymin0, gymax0))
+                ax.set_ylim((gymin0, gymax0))
 
-        axs[n_rows - 1][n_cols // 2].set_xlabel("kernel sample")
+            # Remove x ticks and labels
+            ax.tick_params(axis="x", length=0)
+            ax.set_xticklabels([])
 
+            # Only show y axis values on first column
+            if gpu > 0:
+                ax.tick_params(axis="y", length=0)
+                ax.set_yticklabels([])
+
+    # Center ylabel across all rows
+    fig.text(0.01, 0.5, "norm lead value", ha="left", va="center", rotation="vertical")
+
+    # Center xlabel across all columns
+    fig.text(0.5, 0.01, "kernel sample", ha="center", va="bottom")
+
+    # Add border around figure in paper mode (removed when saving)
+    if paper_mode.enabled:
+        fig.patches.append(mpatches.Rectangle(
+            (0, 0), 1, 1,
+            transform=fig.transFigure,
+            fill=False,
+            edgecolor="black",
+            linewidth=1,
+            zorder=1000,
+        ))
 
 def main(
     ts_files: list[str] = ["./ts.pkl"],

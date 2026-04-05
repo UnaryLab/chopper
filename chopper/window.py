@@ -454,7 +454,7 @@ class MatplotlibWidget(QWidget):
             self.figure.patches.clear()
 
             # Save at 300 DPI
-            self.figure.savefig(path, dpi=300, bbox_inches="tight")
+            self.figure.savefig(path, dpi=300)
 
             # Restore patches
             self.figure.patches.extend(saved_patches)
