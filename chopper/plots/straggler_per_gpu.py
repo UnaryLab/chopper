@@ -215,14 +215,15 @@ def main(
     frameworks: list[Framework] = [Framework.FSDPv2],
     idx_start: int = 0,
     idx_end: int = -1,
-    y_max: float = float("inf"),
-    y_min: float = float("-inf"),
-    alpha: float = 1.0,
+    y_maxs: list[float] = [float("inf")],
+    y_mins: list[float] = [float("-inf")],
+    alpha: float = 0.025,
+    s: float = 0.1,
     filename: str = "straggler_per_gpu.png",
 ):
     fig = Figure()
     input_data = get_data(ts_files, variants, frameworks)
-    draw(fig, input_data, idx_start, idx_end, y_max, y_min, alpha)
+    draw(fig, input_data, idx_start, idx_end, y_maxs, y_mins, alpha, s, PaperMode())
     fig.savefig(filename, dpi=300)
 
 

@@ -78,6 +78,8 @@ def draw(
     per_variant_norm: bool = False,
     paper_mode: PaperMode = PaperMode(),
 ):
+    print("got starts:", starts)
+    print("got stops:", stops)
     """Draw normalized frequency and power metrics over time.
 
     Creates a multi-panel scatter plot showing GPU frequency, memory frequency,
