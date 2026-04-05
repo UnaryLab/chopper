@@ -164,3 +164,26 @@ def draw(
                 axs[i][gpu].set_ylim((gymin0, gymax0))
 
         axs[n_rows - 1][n_cols // 2].set_xlabel("kernel sample")
+
+
+def main(
+    ts_files: list[str] = ["./ts.pkl"],
+    variants: list[str] = ["default"],
+    frameworks: list[Framework] = [Framework.FSDPv2],
+    idx_start: int = 0,
+    idx_end: int = -1,
+    y_max: float = float("inf"),
+    y_min: float = float("-inf"),
+    alpha: float = 1.0,
+    filename: str = "straggler_per_gpu.png",
+):
+    fig = Figure()
+    input_data = get_data(ts_files, variants, frameworks)
+    draw(fig, input_data, idx_start, idx_end, y_max, y_min, alpha)
+    fig.savefig(filename, dpi=300)
+
+
+if __name__ == "__main__":
+    import fire
+
+    fire.Fire(main)
