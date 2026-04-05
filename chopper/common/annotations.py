@@ -98,7 +98,7 @@ def assign_chunks(df: DataFrame) -> DataFrame:
         (df['operator-name'].str.startswith('b_', na=False) & ((df['operator-name'] != 'b_FullyShardedDataParallel._pre_forward')) |
          (
              (df['operator-name'] == 'b_FullyShardedDataParallel._pre_forward') &
-            (~df['name'].str.startswith("ncclDevKernel") | df['name_cpu_op'].str.endswith('allreduce')) &
+            (~df['name'].str.startswith("ncclDevKernel", na=False) | df['name_cpu_op'].str.endswith('allreduce', na=False)) &
              (df['name_cpu_op'] != 'aten::copy_')
         )) |
         (df['operator-name'] == 'f_FullyShardedDataParallel._post_backward_hook') |
