@@ -49,6 +49,7 @@ def draw(
     wait_steps: int = 50,
     y_max: float = float("inf"),
     y_min: float = float("-inf"),
+    scatter_alpha: float = 1.0,
     paper_mode: PaperMode = PaperMode(),
 ):
     """Draw normalized lead and throughput over iterations.
@@ -215,7 +216,7 @@ def draw(
             total_lead_df["index"],
             total_lead_df["total_lead"] / global_max_lead,
             color=okabe_ito["Black"],
-            alpha=1.0,
+            alpha=scatter_alpha,
             s=0.1,
             zorder=2,
         )
@@ -300,7 +301,7 @@ def draw(
         for metric in color_dict.keys()
     ]
 
-    fig.legend(
+    legend_kwargs = dict(
         handles=legend_handles,
         loc="upper center",
         ncol=len(color_dict.keys()),
@@ -310,6 +311,9 @@ def draw(
         handlelength=0.5,
         frameon=False,
     )
+    if paper_mode.enabled and paper_mode.legend_bbox is not None:
+        legend_kwargs["bbox_to_anchor"] = paper_mode.legend_bbox
+    fig.legend(**legend_kwargs)
 
 def main(
     ts_files: list[str] = ["./ts.pkl"],

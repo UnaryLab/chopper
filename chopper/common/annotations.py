@@ -27,6 +27,7 @@ class PaperMode:
     hspace: float = 0.3
     ncol: int = 1
     figsize_ratio: float = 1.0
+    legend_bbox: tuple[float, float] | None = None
 
 
 class Framework(enum.IntEnum):

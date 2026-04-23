@@ -251,7 +251,7 @@ def draw(
         for metric in metrics
     ]
 
-    fig.legend(
+    legend_kwargs = dict(
         handles=legend_handles,
         loc="upper center",
         ncol=len(metrics),
@@ -261,6 +261,9 @@ def draw(
         handlelength=0.5,
         frameon=False,
     )
+    if paper_mode.enabled and paper_mode.legend_bbox is not None:
+        legend_kwargs["bbox_to_anchor"] = paper_mode.legend_bbox
+    fig.legend(**legend_kwargs)
 
     for ri in range(n_rows-1):
         for ci in range(n_cols):

@@ -515,6 +515,9 @@ class PaperModeSelection(QWidget):
         self.hspace_edit = QLineEdit(str(val.hspace))
         self.ncol_edit = QLineEdit(str(val.ncol))
         self.figsize_ratio_edit = QLineEdit(str(val.figsize_ratio))
+        self.legend_bbox_edit = QLineEdit(
+            "" if val.legend_bbox is None else f"{val.legend_bbox[0]},{val.legend_bbox[1]}"
+        )
 
         # Layout for the group box contents
         group_layout = QVBoxLayout()
@@ -529,6 +532,7 @@ class PaperModeSelection(QWidget):
             ("hspace", self.hspace_edit),
             ("ncol", self.ncol_edit),
             ("figsize_ratio", self.figsize_ratio_edit),
+            ("legend_bbox (x,y)", self.legend_bbox_edit),
         ]:
             row = QHBoxLayout()
             row.addWidget(QLabel(label_text))
@@ -563,6 +567,12 @@ class PaperModeSelection(QWidget):
                         widget.setVisible(checked)
 
     def get_selections(self):
+        legend_bbox_text = self.legend_bbox_edit.text().strip()
+        if legend_bbox_text:
+            parts = legend_bbox_text.split(",")
+            legend_bbox = (float(parts[0]), float(parts[1]))
+        else:
+            legend_bbox = None
         return self.name, PaperMode(
             enabled=self.group_box.isChecked(),
             left=float(self.left_edit.text()),
@@ -573,4 +583,5 @@ class PaperModeSelection(QWidget):
             hspace=float(self.hspace_edit.text()),
             ncol=int(self.ncol_edit.text()),
             figsize_ratio=float(self.figsize_ratio_edit.text()),
+            legend_bbox=legend_bbox,
         )

@@ -219,11 +219,12 @@ def main(
     y_mins: list[float] = [float("-inf")],
     alpha: float = 0.025,
     s: float = 0.1,
+    paper_mode: PaperMode = PaperMode(),
     filename: str = "straggler_per_gpu.png",
 ):
     fig = Figure()
     input_data = get_data(ts_files, variants, frameworks)
-    draw(fig, input_data, idx_start, idx_end, y_maxs, y_mins, alpha, s, PaperMode())
+    draw(fig, input_data, idx_start, idx_end, y_maxs, y_mins, alpha, s, paper_mode)
     fig.savefig(filename, dpi=300)
 
 
