@@ -4,7 +4,6 @@ import pandas as pd
 from typing import Optional, List, Dict, Sequence
 
 from chopper.common.annotations import (
-    Framework,
     no_overlap_mask,
     assign_operator_type,
     assign_chunks as do_assign_chunks,
@@ -39,13 +38,12 @@ def get_df(
     group_arr: Optional[List] = None,
     group_map: Optional[Dict[str, List[str]]] = None,
     sort_value: Optional[str] = None,
-    framework: Framework = Framework.FSDPv1,
 ) -> pd.DataFrame:
     """Load and preprocess trace data with optional transformations.
-    
+
     Main entry point for loading trace files with flexible preprocessing options
     including filtering, grouping, and aggregation.
-    
+
     Args:
         fn: Path to trace pickle file
         iter_idxs: Optional list of iteration indices to select
@@ -57,8 +55,7 @@ def get_df(
         group_arr: Optional list of columns to group by for aggregation
         group_map: Optional dict mapping columns to aggregation functions
         sort_value: Optional column name to sort by after grouping
-        framework: Framework enum for framework-specific processing
-        
+
     Returns:
         Processed DataFrame with applied transformations
     """
@@ -70,8 +67,7 @@ def get_df(
         df = select_iters(df, iter_idxs)
 
     if remove_overlap:
-        df = df[no_overlap_mask(
-            df, framework=framework)]
+        df = df[no_overlap_mask(df)]
     if assign_optype:
         df = assign_operator_type(df)
 
@@ -125,21 +121,19 @@ def get_straggler_df(
     fn: str,
     iter_idxs: Optional[List] = None,
     agg_meth: str = 'max',
-    framework: Framework = Framework.FSDPv1,
     kernel_name: bool = False,
 ) -> pd.DataFrame:
     """Load and compute straggler metrics from trace data.
-    
+
     Processes trace data to identify performance stragglers by computing
     how much each GPU lags behind the slowest GPU for each operation.
-    
+
     Args:
         fn: Path to trace pickle file
         iter_idxs: Optional list of iteration indices to select
         agg_meth: Aggregation method ('max', 'min', 'mean') for straggler reference
-        framework: Framework enum for framework-specific processing
         kernel_name: If True, include kernel names in grouping
-        
+
     Returns:
         DataFrame with straggler metrics including 's-value' (lag time) and
         's-delta' (change in lag between operations)
@@ -159,7 +153,6 @@ def get_straggler_df(
             'dur': ['sum', 'last'],
         },
         sort_value='ts_first',
-        framework=framework,
     )
     agg_df = df.groupby(
         group_arr,
@@ -213,22 +206,20 @@ def get_straggler_contributors(
 def get_overlap_df(
     fn: str,
     iter_idxs: Optional[List] = None,
-    framework: Framework = Framework.FSDPv1,
     kernel_name: bool = False,
     include_comm_df: bool = False,
 ):
     """Compute communication-computation overlap ratios.
-    
+
     Analyzes how much computation overlaps with communication operations
     to assess pipeline efficiency.
-    
+
     Args:
         fn: Path to trace pickle file
         iter_idxs: Optional list of iteration indices to select
-        framework: Framework enum for framework-specific processing
         kernel_name: If True, include kernel names in grouping
         include_comm_df: If True, return both overlap and communication DataFrames
-        
+
     Returns:
         If include_comm_df is False: DataFrame with overlap_ratio column
         If include_comm_df is True: Tuple of (overlap_df, comm_df)
@@ -238,8 +229,7 @@ def get_overlap_df(
         iter_idxs=iter_idxs,
         sort_value='ts',
     )
-    comm_df = comm_df[~no_overlap_mask(
-        comm_df, framework=framework)]
+    comm_df = comm_df[~no_overlap_mask(comm_df)]
     comm_df['end_ts'] = comm_df['ts'] + comm_df['dur']
 
     comp_df = get_df(
@@ -256,7 +246,6 @@ def get_overlap_df(
             'dur': ['sum', 'last'],
         },
         sort_value='ts_first',
-        framework=framework,
     )
     comp_df['end_ts'] = comp_df['ts_last'] + comp_df['dur_last']
     comp_df['elapsed'] = comp_df['end_ts'] - comp_df['ts_first']
@@ -286,7 +275,7 @@ def get_overlap_df(
             group.loc[op_idx, "overlap_ratio"] = ratio
         return group
 
-    ovr_df = comp_df.groupby('gpu').apply(add_overlap).droplevel(0)
+    ovr_df = comp_df.groupby('gpu').apply(add_overlap).reset_index(level=0)
     if include_comm_df:
         return ovr_df, comm_df
     else:
@@ -296,22 +285,20 @@ def get_overlap_df(
 def get_slack_adv_df(
     fn: str,
     iter_idxs: Optional[List] = None,
-    framework: Framework = Framework.FSDPv1,
     kernel_name: bool = False,
     agg_meth: str = 'max',
 ):
     """Compute slack advancement metrics for communication operations.
-    
+
     Analyzes how much communication operations can be advanced (started earlier)
     based on available slack in the computation schedule.
-    
+
     Args:
         fn: Path to trace pickle file
         iter_idxs: Optional list of iteration indices to select
-        framework: Framework enum for framework-specific processing
         kernel_name: If True, include kernel names in grouping
         agg_meth: Aggregation method ('max', 'min', 'mean') for slack reference
-        
+
     Returns:
         Tuple of (comm_df, comp_df) with timing and straggler information
     """
@@ -326,10 +313,8 @@ def get_slack_adv_df(
             'dur': ['sum', 'last'],
         },
         sort_value='ts_first',
-        framework=framework,
     )
-    comm_df = comm_df[~no_overlap_mask(
-        comm_df, framework=framework)]
+    comm_df = comm_df[~no_overlap_mask(comm_df)]
     comm_df = comm_df[comm_df['name'] != 'Memcpy HtoD (Host -> Device)']
     comm_df['end_ts'] = comm_df['ts_last'] + comm_df['dur']
     comm_df['elapsed'] = comm_df['end_ts'] - comm_df['ts_first']
@@ -347,7 +332,6 @@ def get_slack_adv_df(
             'dur': ['sum', 'last'],
         },
         sort_value='ts_first',
-        framework=framework,
     )
     comp_df['end_ts'] = comp_df['ts_last'] + comp_df['dur_last']
     comp_df['elapsed'] = comp_df['end_ts'] - comp_df['ts_first']

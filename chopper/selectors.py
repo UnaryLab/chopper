@@ -13,14 +13,13 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QLabel,
     QCheckBox,
-    QMenu,
     QLineEdit,
     QFileDialog,
     QGroupBox,
 )
 from PyQt6.QtCore import Qt
 
-from chopper.common.annotations import Framework, PaperMode
+from chopper.common.annotations import PaperMode
 
 
 class PlotSelection(QWidget):
@@ -60,83 +59,6 @@ class PlotSelection(QWidget):
 
     def get_selected(self):
         return self.list.selectedItems()
-
-
-class FrameworkSelection(QWidget):
-    """Widget for configuring framework selection parameters.
-    
-    Allows selecting and reordering Framework enum values (FSDPv1, FSDPv2)
-    for trace analysis. Supports drag-and-drop reordering and double-click
-    to change framework type.
-    
-    Attributes:
-        name: Parameter name
-        ann: Type annotation string
-        list: QListWidget with Framework enum items
-    """
-    def __init__(self, vals: list, name: str, ann, parent=None):
-        super().__init__(parent)
-        self.name = name
-        self.ann = ann
-        label = QLabel(f"{self.name}: {self.ann}")
-
-        self.list = QListWidget()
-        self.list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        self.list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
-        self.list.itemDoubleClicked.connect(self.show_dropdown)
-
-        for val in vals:
-            item = QListWidgetItem(val.name)
-            item.setData(Qt.ItemDataRole.UserRole, val)
-            self.list.addItem(item)
-
-        self.add_button = QPushButton("add")
-        self.add_button.clicked.connect(self.add_item)
-
-        self.remove_button = QPushButton("remove")
-        self.remove_button.clicked.connect(self.remove_item)
-
-        add_rem = QHBoxLayout()
-        add_rem.addWidget(self.add_button)
-        add_rem.addWidget(self.remove_button)
-
-        layout = QVBoxLayout()
-        layout.addWidget(label)
-        layout.addLayout(add_rem)
-        layout.addWidget(self.list)
-        self.setLayout(layout)
-
-    def show_dropdown(self, item):
-        menu = QMenu(self)
-        for framework in Framework:
-            action = menu.addAction(framework.name)
-            action.triggered.connect(
-                lambda checked, f=framework, i=item: self.set_framework(i, f)
-            )
-
-        rect = self.list.visualItemRect(item)
-        pos = self.list.mapToGlobal(rect.topRight())
-        menu.exec(pos)
-
-    def set_framework(self, item, framework):
-        item.setText(framework.name)
-        item.setData(Qt.ItemDataRole.UserRole, framework)
-
-    def add_item(self):
-        item = QListWidgetItem(Framework.FSDPv1.name)
-        item.setData(Qt.ItemDataRole.UserRole, Framework.FSDPv1)
-        self.list.addItem(item)
-
-    def remove_item(self):
-        for item in self.list.selectedItems():
-            row = self.list.row(item)
-            self.list.takeItem(row)
-
-    def get_selections(self):
-        return self.name, tuple(
-            self.list.item(i).data(Qt.ItemDataRole.UserRole)
-            for i in range(self.list.count())
-        )
 
 
 class BoolSelection(QCheckBox):

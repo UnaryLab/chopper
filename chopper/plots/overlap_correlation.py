@@ -14,7 +14,7 @@ from matplotlib.ticker import FuncFormatter
 
 from chopper.common.colors import rgb
 from chopper.common.load import get_overlap_df
-from chopper.common.annotations import Framework, PaperMode
+from chopper.common.annotations import PaperMode
 
 
 def _no_digits_formatter(x, _):
@@ -23,50 +23,47 @@ def _no_digits_formatter(x, _):
 
 def get_data(
     ts_files: list[str] = ["./ts.pkl"],
-    variants: list[str] = ["default"],
-    frameworks: list[Framework] = [Framework.FSDPv2],
+    configs: list[str] = ["default"],
     operators: list[str] = [
         "b_attn_n", "b_mlp_n", "b_mlp_up", "b_mlp_gp", "b_mlp_dp",
     ],
     iter_idxs: range = range(-5, -2, 1),
 ):
-    """Load overlap data for the requested operators across variants.
+    """Load overlap data for the requested operators across configs.
 
-    Normalizes 'elapsed' per operator by the minimum elapsed across variants.
+    Normalizes 'elapsed' per operator by the minimum elapsed across configs.
 
     Args:
         ts_files: List of ts.pkl trace files
-        variants: Variant labels
-        frameworks: Framework type per ts_file
+        configs: Config labels (e.g. "b1s4", "b2s8")
         operators: Operator names to include
         iter_idxs: Range of iteration indices to select
 
     Returns:
-        Dict mapping variant -> {operator -> overlap DataFrame}
+        Dict mapping config -> {operator -> overlap DataFrame}
     """
     data = {}
-    for ts_file, variant, framework in zip(ts_files, variants, frameworks):
-        data[variant] = get_overlap_df(
+    for ts_file, config in zip(ts_files, configs):
+        data[config] = get_overlap_df(
             ts_file,
-            framework=framework,
             iter_idxs=list(iter_idxs),
         )
 
-    overlap_data = {v: {} for v in variants}
-    vendor_min_elapsed = {v: {} for v in variants}
+    overlap_data = {config: {} for config in configs}
+    config_min_elapsed = {config: {} for config in configs}
 
-    for vendor in variants:
+    for config in configs:
         for op in operators:
-            op_mask = data[vendor]["operator-name"] == op
-            sub = data[vendor][op_mask].copy()
+            op_mask = data[config]["operator-name"] == op
+            sub = data[config][op_mask].copy()
             sub["op_idx"] = sub.groupby("gpu").cumcount()
-            overlap_data[vendor][op] = sub
-            vendor_min_elapsed[vendor][op] = np.min(sub["elapsed"])
+            overlap_data[config][op] = sub
+            config_min_elapsed[config][op] = np.min(sub["elapsed"])
 
     for op in operators:
-        global_min = min(vendor_min_elapsed[v][op] for v in variants)
-        for vendor in variants:
-            overlap_data[vendor][op]["elapsed"] /= global_min
+        global_min = min(config_min_elapsed[config][op] for config in configs)
+        for config in configs:
+            overlap_data[config][op]["elapsed"] /= global_min
 
     return overlap_data
 
@@ -85,8 +82,8 @@ def draw(
     """
     data = input_data
     overlaps = None
-    for vendor in data.keys():
-        ops = tuple(data[vendor].keys())
+    for config in data.keys():
+        ops = tuple(data[config].keys())
         if overlaps is None:
             overlaps = ops
         else:
@@ -108,30 +105,30 @@ def draw(
         for r in range(n_rows)
     )
 
-    vendors = sorted(data.keys())
+    params = list(data.keys())
     rgb_colors = (rgb(0xD4, 0x11, 0x59), rgb(0x1A, 0x85, 0xFF))
-    color_dict = {vc: rgb_colors[i] for i, vc in enumerate(vendors)}
+    color_dict = {config: rgb_colors[i % len(rgb_colors)] for i, config in enumerate(params)}
     line_color_dict = {
-        vc: (
-            max(0, rgb_colors[i][0] - 0.3),
-            max(0, rgb_colors[i][1] - 0.3),
-            max(0, rgb_colors[i][2] - 0.3),
+        config: (
+            max(0, rgb_colors[i % len(rgb_colors)][0] - 0.3),
+            max(0, rgb_colors[i % len(rgb_colors)][1] - 0.3),
+            max(0, rgb_colors[i % len(rgb_colors)][2] - 0.3),
         )
-        for i, vc in enumerate(vendors)
+        for i, config in enumerate(params)
     }
 
     for j, ov in enumerate(overlaps):
         axs = axses[j]
-        for i, vendor in enumerate(reversed(vendors)):
+        for i, config in enumerate(reversed(params)):
             overlap_ratio = (
-                data[vendor][ov]
+                data[config][ov]
                 .groupby("op_idx")["overlap_ratio"]
                 .agg(["min", lambda x: x.quantile(0.25), "median",
                       lambda x: x.quantile(0.75), "max"])
                 .reset_index()
             )
             elapsed = (
-                data[vendor][ov]
+                data[config][ov]
                 .groupby("op_idx")["elapsed"]
                 .agg(["min", lambda x: x.quantile(0.25), "median",
                       lambda x: x.quantile(0.75), "max"])
@@ -158,7 +155,7 @@ def draw(
                 1.2 + i * 0.25, 0.98, f"{corr:.2f}",
                 transform=axs[0].transAxes,
                 ha="left", va="bottom",
-                color=line_color_dict[vendor],
+                color=line_color_dict[config],
                 fontsize=8, fontweight="bold",
             )
 
@@ -166,30 +163,30 @@ def draw(
 
             axs[0].plot(
                 overlap_ratio["op_idx"], overlap_ratio["median"],
-                linestyle="-", marker=marker, label=vendor,
-                color=line_color_dict[vendor], linewidth=1.0,
+                linestyle="-", marker=marker, label=config,
+                color=line_color_dict[config], linewidth=1.0,
             )
             axs[0].fill_between(
                 overlap_ratio["op_idx"], overlap_ratio["min"], overlap_ratio["max"],
-                alpha=0.2, color=color_dict[vendor], edgecolor=None,
+                alpha=0.2, color=color_dict[config], edgecolor=None,
             )
             axs[0].fill_between(
                 overlap_ratio["op_idx"], overlap_ratio["q1"], overlap_ratio["q3"],
-                alpha=0.5, color=color_dict[vendor], edgecolor=None,
+                alpha=0.5, color=color_dict[config], edgecolor=None,
             )
 
             axs[1].plot(
                 elapsed["op_idx"], elapsed["median"],
-                linestyle="-", marker=marker, label=vendor,
-                color=line_color_dict[vendor], linewidth=1.0,
+                linestyle="-", marker=marker, label=config,
+                color=line_color_dict[config], linewidth=1.0,
             )
             axs[1].fill_between(
                 elapsed["op_idx"], elapsed["min"], elapsed["max"],
-                alpha=0.3, color=color_dict[vendor], edgecolor=None,
+                alpha=0.3, color=color_dict[config], edgecolor=None,
             )
             axs[1].fill_between(
                 elapsed["op_idx"], elapsed["q1"], elapsed["q3"],
-                alpha=0.5, color=color_dict[vendor], edgecolor=None,
+                alpha=0.5, color=color_dict[config], edgecolor=None,
             )
 
         axs[0].yaxis.set_major_formatter(FuncFormatter(_no_digits_formatter))
@@ -229,11 +226,11 @@ def draw(
             fontsize=8, fontweight="bold",
         )
 
-    legend_handles = [mpatches.Patch(color=color_dict[v], label=v) for v in vendors]
+    legend_handles = [mpatches.Patch(color=color_dict[config], label=config) for config in params]
     legend_kwargs = dict(
         handles=legend_handles,
         loc="upper center",
-        ncol=len(vendors),
+        ncol=len(params),
         borderpad=0.17,
         handletextpad=0.4,
         columnspacing=0.6,
@@ -256,8 +253,7 @@ def draw(
 
 def main(
     ts_files: list[str] = ["./ts.pkl"],
-    variants: list[str] = ["default"],
-    frameworks: list[Framework] = [Framework.FSDPv2],
+    configs: list[str] = ["default"],
     operators: list[str] = [
         "b_attn_n", "b_mlp_n", "b_mlp_up", "b_mlp_gp", "b_mlp_dp",
     ],
@@ -265,11 +261,12 @@ def main(
     iter_stop: int = -2,
     iter_step: int = 1,
     paper_mode: PaperMode = PaperMode(),
-    filename: str = "overlap_correlation.png",
+    figsize: tuple[float, float] = (7.16, 4.0),
+    filename: str = "overlap_correlation.pdf",
 ):
-    fig = Figure()
+    fig = Figure(figsize=figsize)
     iter_idxs = range(iter_start, iter_stop, iter_step)
-    input_data = get_data(ts_files, variants, frameworks, operators, iter_idxs)
+    input_data = get_data(ts_files, configs, operators, iter_idxs)
     draw(fig, input_data, paper_mode)
     fig.savefig(filename, dpi=300)
 

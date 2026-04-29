@@ -13,7 +13,7 @@ from matplotlib.figure import Figure
 
 def get_data(
     gpu_files: list[str] = ["./gpu.pkl"],
-    variants: list[str] = ["default"],
+    configs: list[str] = ["default"],
 ):
     """Load GPU telemetry data for power and frequency analysis.
 
@@ -22,13 +22,13 @@ def get_data(
 
     Args:
         gpu_files: List of paths to GPU telemetry pickle files
-        variants: List of variant names corresponding to each GPU file
+        configs: Config labels (e.g. "b1s4", "b2s8")
 
     Returns:
-        Dict mapping variant names to raw GPU telemetry DataFrames
+        Dict mapping config names to raw GPU telemetry DataFrames
     """
     return {
-        variant: load_pickle(gpu_file) for gpu_file, variant in zip(gpu_files, variants)
+        config: load_pickle(gpu_file) for gpu_file, config in zip(gpu_files, configs)
     }
 
 
@@ -51,13 +51,13 @@ def draw(
     Args:
         fig: Matplotlib Figure object to draw on
         input_data: Dict from get_data() containing GPU telemetry
-        starts: Start fraction of time window (0-1) for each variant
-        stops: Stop fraction of time window (0-1) for each variant
-        per_variant_norm: If True, normalize each variant independently
+        starts: Start fraction of time window (0-1) for each config
+        stops: Stop fraction of time window (0-1) for each config
+        per_variant_norm: If True, normalize each config independently
         paper_mode: PaperMode settings for publication-quality figures
     """
     data = input_data
-    variants = list(data.keys())
+    configs = list(data.keys())
     metrics = (
         'current_gfxclk',
         'current_socket_power',
@@ -73,7 +73,7 @@ def draw(
     }
 
     n_rows = len(metrics)
-    n_cols = len(variants)
+    n_cols = len(configs)
 
     fig.clear()
     fig.patches.clear()
@@ -95,12 +95,11 @@ def draw(
 
     gpus: list[int] = []
 
-    # First pass: compute rolling values for all variants
-    for vi, variant in enumerate(variants):
+    for vi, config in enumerate(configs):
         start = starts[vi] if vi < len(starts) else starts[0]
         stop = stops[vi] if vi < len(stops) else stops[0]
 
-        metric_trace = data[variant]
+        metric_trace = data[config]
         metric_df = metric_trace.copy()
         metric_df['gpu'] -= 2
 
@@ -128,26 +127,25 @@ def draw(
             tmp_m_[f'{metric}_rolling'] = tmp_m_[metric].rolling(
                 window=2000,
             ).quantile(.95 if metric == 'current_socket_power' else .05)
-            metric_slot[variant] = tmp_m_
+            metric_slot[config] = tmp_m_
 
-    # Second pass: compute normalization based on rolling values
     if per_variant_norm:
-        variant_norm: dict[str, dict[str, float]] = {}
-        for variant in variants:
-            variant_norm[variant] = {}
+        config_norm: dict[str, dict[str, float]] = {}
+        for config in configs:
+            config_norm[config] = {}
             for metric in metrics:
                 rolling_col = f'{metric}_rolling'
-                rolling_vals = tmp_m[metric][variant][rolling_col].dropna()
+                rolling_vals = tmp_m[metric][config][rolling_col].dropna()
                 if metric in freq_metrics:
-                    variant_norm[variant][metric] = rolling_vals.min()
+                    config_norm[config][metric] = rolling_vals.min()
                 else:
-                    variant_norm[variant][metric] = rolling_vals.max()
+                    config_norm[config][metric] = rolling_vals.max()
     else:
         global_norm: dict[str, float | None] = {metric: None for metric in metrics}
-        for variant in variants:
+        for config in configs:
             for metric in metrics:
                 rolling_col = f'{metric}_rolling'
-                rolling_vals = tmp_m[metric][variant][rolling_col].dropna()
+                rolling_vals = tmp_m[metric][config][rolling_col].dropna()
                 if metric in freq_metrics:
                     norm_val = rolling_vals.min()
                 else:
@@ -161,23 +159,21 @@ def draw(
                 else:
                     global_norm[metric] = max(cur, norm_val)
 
-    # Draw plots
-    for vi, variant in enumerate(variants):
-        info(f"Drawing: {variant}")
+    for vi, config in enumerate(configs):
+        info(f"Drawing: {config}")
         for ci, metric in enumerate(metrics):
             ax = axs[metrics.index(metric)][vi]
 
-            # Get norm value
             if per_variant_norm:
-                norm_val = variant_norm[variant][metric]
+                norm_val = config_norm[config][metric]
             else:
                 nv = global_norm[metric]
                 assert nv is not None
                 norm_val = nv
 
             ax.plot(
-                tmp_m[metric][variant]['index'],
-                tmp_m[metric][variant][f'{metric}_rolling'] / norm_val,
+                tmp_m[metric][config]['index'],
+                tmp_m[metric][config][f'{metric}_rolling'] / norm_val,
                 color=color_dict[metric],
                 linewidth=1.0,
                 linestyle='-',
@@ -198,8 +194,7 @@ def draw(
             else:
                 gymax[metric] = max(cur_max, ymax)
 
-    # Apply y-limits
-    for vi, variant in enumerate(variants):
+    for vi, config in enumerate(configs):
         for mi, metric in enumerate(metrics):
             gmin = gymin[metric]
             gmax = gymax[metric]
@@ -215,9 +210,8 @@ def draw(
             axs[metrics.index(metric)][vi].set_ylim((gmin_, gmax_))
             axs[metrics.index(metric)][vi].tick_params(axis='x', pad=1)
 
-    # Set variant titles on second row (between 1st and 2nd row)
-    for vi, variant in enumerate(variants):
-        axs[1][vi].set_title(variant, pad=2, fontsize=8)
+    for vi, config in enumerate(configs):
+        axs[1][vi].set_title(config, pad=2, fontsize=8)
 
     for metric in metrics:
         axs[metrics.index(metric)][0].tick_params(axis='y', pad=1)
@@ -286,16 +280,17 @@ def draw(
 
 def main(
     gpu_files: list[str] = ["./gpu.pkl"],
-    variants: list[str] = ["default"],
+    configs: list[str] = ["default"],
     starts: list[float] = [0.0],
     stops: list[float] = [1.0],
     ymaxs: list[float] = [float('inf')],
     ymins: list[float] = [float('-inf')],
     per_variant_norm: bool = False,
-    filename: str = "average_power_frequency.png"
+    figsize: tuple[float, float] = (7.16, 2.5),
+    filename: str = "average_power_frequency.pdf",
 ):
-    fig = Figure()
-    input_data = get_data(gpu_files, variants)
+    fig = Figure(figsize=figsize)
+    input_data = get_data(gpu_files, configs)
     draw(fig, input_data, starts, stops, ymaxs, ymins, per_variant_norm, PaperMode())
     fig.savefig(filename, dpi=300)
 

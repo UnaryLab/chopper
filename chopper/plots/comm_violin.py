@@ -13,7 +13,7 @@ from matplotlib.ticker import MaxNLocator
 from chopper.common.colors import rgb
 from chopper.common.cache import load_pickle
 from chopper.common.annotations import (
-    Framework, PaperMode, no_overlap_mask, assign_chunks,
+    PaperMode, no_overlap_mask, assign_chunks,
 )
 from chopper.common.rocm_metrics import derive_duration
 
@@ -37,8 +37,7 @@ def _agg(df, group_arr, derive_cols=None):
 
 def get_data(
     ts_files: list[str] = ["./ts.pkl"],
-    variants: list[str] = ["default"],
-    frameworks: list[Framework] = [Framework.FSDPv2],
+    configs: list[str] = ["default"],
 ):
     """Load and aggregate communication kernel durations.
 
@@ -48,18 +47,17 @@ def get_data(
 
     Args:
         ts_files: List of paths to ts.pkl trace files
-        variants: Variant labels (e.g. "FSDPv1-b1s4")
-        frameworks: Framework type for each ts_file
+        configs: Config labels (e.g. "b1s4", "b2s8")
 
     Returns:
-        Dict mapping variant -> {"ag", "rs", "other"} -> aggregated DataFrame
+        Dict mapping config -> {"ag", "rs", "other"} -> aggregated DataFrame
     """
-    data = {v: load_pickle(fn) for v, fn in zip(variants, ts_files)}
-    overlap_data = {v: {} for v in variants}
+    data = {config: load_pickle(fn) for config, fn in zip(configs, ts_files)}
+    overlap_data = {config: {} for config in configs}
 
     overlaps_keys = ("ag", "rs", "other")
     max_dur = 0
-    for framework, setup in zip(frameworks, variants):
+    for setup in configs:
         df = data[setup]
         df["layer"] = df["layer"].fillna(-1)
         weird_mask = df["iteration"].isna()
@@ -73,19 +71,25 @@ def get_data(
             "MEMORY_COPY_HOST_TO_DEVICE",
         ))]
         df = assign_chunks(df)
-        overlap_mask = no_overlap_mask(df, framework=framework)
+        overlap_mask = no_overlap_mask(df)
 
-        allgather_mask = df["name_cpu_op"].str.endswith("allgather_base")
-        allreduce_mask = df["name_cpu_op"].str.endswith("allreduce")
-        reduce_scatter_mask = df["name_cpu_op"].str.endswith("reduce_scatter_base")
-        vector_mask = (
-            ~overlap_mask & ~df["name"].str.startswith("ncclDevKernel")
-        ) | allreduce_mask
+        allgather_mask = (
+            df["operator-name"].str.contains("all_gather", na=False)
+            & ~df["operator-name"].str.startswith("b_", na=False)
+        )
+        reduce_scatter_mask = (
+            df["operator-name"].str.contains("post_backward_reduce", na=False)
+            | df["operator-name"].str.startswith("b_FSDP::pre_forward", na=False)
+        )
+
+        other_mask = (
+            ~overlap_mask & ~df["name"].str.startswith("ncclDevKernel", na=False)
+        )
 
         overlaps = {
             "ag": allgather_mask,
             "rs": reduce_scatter_mask,
-            "other": vector_mask,
+            "other": other_mask,
         }
         for ov, ov_mask in overlaps.items():
             overlap_data[setup][ov] = _agg(
@@ -95,7 +99,7 @@ def get_data(
             )
             max_dur = max(max_dur, np.max(overlap_data[setup][ov]["Duration"]))
 
-    for setup in variants:
+    for setup in configs:
         for ov in overlaps_keys:
             overlap_data[setup][ov]["Duration"] /= max_dur
 
@@ -118,8 +122,8 @@ def draw(
         paper_mode: PaperMode settings for publication-quality figures
     """
     data = input_data
-    setups = tuple(data.keys())
-    n_cols = max(1, len(setups) // 2)
+    params = list(data.keys())
+    n_cols = len(params)
     n_rows = 1
 
     fig.clear()
@@ -136,21 +140,16 @@ def draw(
         for r in range(n_rows)
     )
 
-    rgb_colors = (rgb(0xD4, 0x11, 0x59), rgb(0x1A, 0x85, 0xFF))
-    fsdp_versions = sorted(set(s.split("-")[0] for s in setups))
-    violin_colors = {vc: rgb_colors[i] for i, vc in enumerate(fsdp_versions)}
-    line_color_dict = {
-        vc: (
-            max(0, rgb_colors[i][0] - 0.3),
-            max(0, rgb_colors[i][1] - 0.3),
-            max(0, rgb_colors[i][2] - 0.3),
-        )
-        for i, vc in enumerate(fsdp_versions)
-    }
+    violin_color = rgb(0xD4, 0x11, 0x59)
+    line_color = (
+        max(0, violin_color[0] - 0.3),
+        max(0, violin_color[1] - 0.3),
+        max(0, violin_color[2] - 0.3),
+    )
     violin_alpha = 0.7
 
     comm_kerns = None
-    for s in setups:
+    for s in params:
         keys = tuple(data[s].keys())
         if comm_kerns is None:
             comm_kerns = keys
@@ -158,17 +157,15 @@ def draw(
             assert comm_kerns == keys
 
     y_ticks = np.arange(1, len(comm_kerns) + 1)
-    for i, s in enumerate(setups):
-        mod_param = "-".join(s.split("-")[1:])
-        vendor = s.split("-")[0]
-        ax = axs[0][i % n_cols]
+    for i, s in enumerate(params):
+        ax = axs[0][i]
         ax.xaxis.set_major_locator(MaxNLocator(nbins=2))
         ax.set_yticks(y_ticks)
         ax.set_xticks((0.5,))
         ax.set_xlim((-0.05, 1.05))
         ax.grid(axis="y", linestyle="--", alpha=0.5)
         ax.grid(axis="x", linestyle="-", alpha=0.5)
-        ax.set_title(mod_param, pad=2, fontsize=8)
+        ax.set_title(s, pad=2, fontsize=8)
 
         ck_data = [data[s][c]["Duration"].values for c in comm_kerns]
         parts = ax.violinplot(
@@ -176,13 +173,12 @@ def draw(
             showmedians=True, widths=0.9,
         )
         for pc in parts["bodies"]:
-            color = violin_colors[vendor]
             pc.set_alpha(violin_alpha)
-            pc.set_facecolor(color)
-            pc.set_edgecolor(color)
+            pc.set_facecolor(violin_color)
+            pc.set_edgecolor(violin_color)
         for line_type in ["cmedians", "cmins", "cmaxes", "cbars"]:
             parts[line_type].set_color(
-                tuple(line_color_dict[vendor] for _ in comm_kerns)
+                tuple(line_color for _ in comm_kerns)
             )
             parts[line_type].set_linewidth(0.8)
 
@@ -198,23 +194,6 @@ def draw(
 
     axs[0][n_cols // 2].set_xlabel("norm dur", labelpad=0)
 
-    legend_handles = [
-        mpatches.Patch(color=violin_colors[v], label=v) for v in violin_colors.keys()
-    ]
-    legend_kwargs = dict(
-        handles=legend_handles,
-        loc="upper center",
-        ncol=len(fsdp_versions),
-        borderpad=0.17,
-        handletextpad=0.4,
-        columnspacing=0.6,
-        handlelength=0.5,
-        frameon=False,
-    )
-    if paper_mode.enabled and paper_mode.legend_bbox is not None:
-        legend_kwargs["bbox_to_anchor"] = paper_mode.legend_bbox
-    fig.legend(**legend_kwargs)
-
     if paper_mode.enabled:
         fig.patches.append(
             mpatches.Rectangle(
@@ -227,13 +206,13 @@ def draw(
 
 def main(
     ts_files: list[str] = ["./ts.pkl"],
-    variants: list[str] = ["default"],
-    frameworks: list[Framework] = [Framework.FSDPv2],
+    configs: list[str] = ["default"],
     paper_mode: PaperMode = PaperMode(),
-    filename: str = "comm_violin.png",
+    figsize: tuple[float, float] = (7.16, 2.5),
+    filename: str = "comm_violin.pdf",
 ):
-    fig = Figure()
-    input_data = get_data(ts_files, variants, frameworks)
+    fig = Figure(figsize=figsize)
+    input_data = get_data(ts_files, configs)
     draw(fig, input_data, paper_mode)
     fig.savefig(filename, dpi=300)
 

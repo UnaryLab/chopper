@@ -1,7 +1,7 @@
-"""Per-variant socket power and graphics-clock samples (normalized).
+"""Per-config socket power and graphics-clock samples (normalized).
 
-Two-row scatter (frequency / power) by N variants, normalized per-metric to a
-per-variant reference (max for power, min for frequency).
+Two-row scatter (frequency / power) by N configs, normalized per-metric to a
+per-config reference (max for power, min for frequency).
 (Paper Figure: total_power_*.pdf)
 """
 
@@ -18,18 +18,18 @@ from chopper.common.annotations import PaperMode
 
 def get_data(
     metric_files: list[str] = ["./metric_samples.pkl"],
-    variants: list[str] = ["default"],
+    configs: list[str] = ["default"],
 ):
-    """Load per-variant metric_samples DataFrames.
+    """Load per-config metric_samples DataFrames.
 
     Args:
         metric_files: List of paths to metric_samples.pkl files
-        variants: Variant labels (one per file)
+        configs: Config labels (e.g. "b1s4", "b2s8")
 
     Returns:
-        Dict mapping variant -> raw metric DataFrame
+        Dict mapping config -> raw metric DataFrame
     """
-    return {v: pd.read_pickle(fn) for v, fn in zip(variants, metric_files)}
+    return {config: pd.read_pickle(fn) for config, fn in zip(configs, metric_files)}
 
 
 def draw(
@@ -38,16 +38,16 @@ def draw(
     metrics: list[str] = ["current_gfxclk", "current_socket_power"],
     paper_mode: PaperMode = PaperMode(),
 ):
-    """Draw per-variant scatter of frequency and socket power over samples.
+    """Draw per-config scatter of frequency and socket power over samples.
 
     Args:
         fig: Matplotlib Figure object to draw on
-        input_data: Dict from get_data() of variant -> DataFrame
+        input_data: Dict from get_data() of config -> DataFrame
         metrics: Which columns to plot (rows)
         paper_mode: PaperMode settings for publication-quality figures
     """
     data = input_data
-    variants = list(data.keys())
+    configs = list(data.keys())
 
     ylabel_names = {
         "current_gfxclk": "min norm",
@@ -61,7 +61,7 @@ def draw(
     color_dict = {metric: rgb_colors[i] for i, metric in enumerate(metrics)}
 
     n_rows = len(metrics)
-    n_cols = len(variants)
+    n_cols = len(configs)
 
     fig.clear()
     fig.patches.clear()
@@ -86,9 +86,9 @@ def draw(
     gymin = {metric: None for metric in metrics}
     gymax = {metric: None for metric in metrics}
 
-    for variant in variants:
-        info(f"Drawing: {variant}")
-        metric_df = data[variant].copy()
+    for config in configs:
+        info(f"Drawing: {config}")
+        metric_df = data[config].copy()
         metric_df["gpu"] -= 2
 
         n_gpus = metric_df["gpu"].nunique()
@@ -108,7 +108,7 @@ def draw(
                 norm_tmp_m = tmp_m[metric].max()
             else:
                 norm_tmp_m = tmp_m[metric].min()
-            ax = axs[metrics.index(metric)][variants.index(variant)]
+            ax = axs[metrics.index(metric)][configs.index(config)]
             ax.scatter(
                 tmp_m["index"], tmp_m[metric] / norm_tmp_m,
                 color=color_dict[metric],
@@ -124,16 +124,16 @@ def draw(
             gymin[metric] = ymin if gymin[metric] is None else min(gymin[metric], ymin)
             gymax[metric] = ymax if gymax[metric] is None else max(gymax[metric], ymax)
 
-    for variant in variants:
+    for config in configs:
         for metric in metrics:
-            axs[metrics.index(metric)][variants.index(variant)].set_ylim(
+            axs[metrics.index(metric)][configs.index(config)].set_ylim(
                 (gymin[metric], gymax[metric])
             )
-            axs[metrics.index(metric)][variants.index(variant)].tick_params(
+            axs[metrics.index(metric)][configs.index(config)].tick_params(
                 axis="x", pad=1
             )
-        axs[len(metrics) - 1][variants.index(variant)].set_title(
-            variant, pad=1.5, fontsize=8
+        axs[len(metrics) - 1][configs.index(config)].set_title(
+            config, pad=1.5, fontsize=8
         )
 
     for metric in metrics:
@@ -182,13 +182,14 @@ def draw(
 
 def main(
     metric_files: list[str] = ["./metric_samples.pkl"],
-    variants: list[str] = ["default"],
+    configs: list[str] = ["default"],
     metrics: list[str] = ["current_gfxclk", "current_socket_power"],
     paper_mode: PaperMode = PaperMode(),
-    filename: str = "total_power.png",
+    figsize: tuple[float, float] = (7.16, 2.5),
+    filename: str = "total_power.pdf",
 ):
-    fig = Figure()
-    input_data = get_data(metric_files, variants)
+    fig = Figure(figsize=figsize)
+    input_data = get_data(metric_files, configs)
     draw(fig, input_data, metrics, paper_mode)
     fig.savefig(filename, dpi=300)
 

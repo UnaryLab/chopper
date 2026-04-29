@@ -1,7 +1,7 @@
 from chopper.common.load import get_straggler_df
 from chopper.common.colors import okabe_ito
 from chopper.common.printing import info
-from chopper.common.annotations import Framework, PaperMode
+from chopper.common.annotations import PaperMode
 import matplotlib.patches as mpatches
 from matplotlib.ticker import MaxNLocator
 from matplotlib.ticker import FormatStrFormatter
@@ -10,35 +10,32 @@ from matplotlib.figure import Figure
 
 def get_data(
     ts_files: list[str] = ["./ts.pkl"],
-    variants: list[str] = ["default"],
-    frameworks: list[Framework] = [Framework.FSDPv2],
+    configs: list[str] = ["default"],
 ):
     """Load and process straggler lead and throughput metrics.
-    
+
     Extracts straggler lead values and iteration timing from trace files
     to analyze GPU performance imbalance and training throughput.
-    
+
     Args:
         ts_files: List of paths to trace pickle files
-        variants: List of variant names corresponding to each trace file
-        frameworks: List of Framework enum values for each trace file
-        
+        configs: Config labels (e.g. "b1s4", "b2s8")
+
     Returns:
         Tuple containing:
             - dfs: List of processed DataFrames with straggler metrics
-            - variants: List of variant names
+            - configs: List of config names
     """
     dfs = []
-    for ts_file, var, fw in zip(ts_files, variants, frameworks):
+    for ts_file in ts_files:
         df = get_straggler_df(
             ts_file,
             agg_meth="max",
-            framework=fw,
             kernel_name=True,
         )
         df = df.sort_values("ts_first").reset_index()
         dfs.append(df)
-    return dfs, variants
+    return dfs, configs
 
 
 def draw(
@@ -69,10 +66,10 @@ def draw(
         paper_mode: PaperMode settings for publication-quality figures
     """
 
-    dfs, variants = input_data
+    dfs, configs = input_data
 
     n_rows = 2
-    n_cols = len(variants)
+    n_cols = len(configs)
 
     fig.clear()
     fig.patches.clear()  # Ensure figure-level patches are also cleared
@@ -97,7 +94,7 @@ def draw(
     gymin1: float | None = None
     gymax1: float | None = None
 
-    # Compute global max lead across all variants
+    # Compute global max lead across all configs
     global_max_lead = 0.0
     for df in dfs:
         total_lead_df = (
@@ -111,8 +108,8 @@ def draw(
         )
         global_max_lead = max(global_max_lead, total_lead_df["total_lead"].max())
 
-    for df, variant in zip(dfs, variants):
-        info(f"Drawing: {variant}")
+    for df, config in zip(dfs, configs):
+        info(f"Drawing: {config}")
 
         if not use_elapsed:
             iter_time = (
@@ -163,9 +160,9 @@ def draw(
             "PostAdj": 0.25,
         }
 
-        ax0 = axs[0][variants.index(variant)]
-        ax1 = axs[1][variants.index(variant)]
-        ax1.set_title(variant, pad=2, fontsize=8)
+        ax0 = axs[0][configs.index(config)]
+        ax1 = axs[1][configs.index(config)]
+        ax1.set_title(config, pad=2, fontsize=8)
         ax1.set_zorder(1)
         ax0.set_zorder(0)
         ax0.yaxis.set_major_formatter(FormatStrFormatter("%.2f"))
@@ -245,19 +242,19 @@ def draw(
         ax1.yaxis.set_major_locator(MaxNLocator(nbins=3, prune=None))
         ax0.yaxis.set_major_locator(MaxNLocator(nbins=3, prune=None))
 
-    for variant in variants:
+    for config in configs:
         if y_min != float("-inf") and y_max != float("inf"):
-            axs[0][variants.index(variant)].set_ylim((y_min, y_max))
+            axs[0][configs.index(config)].set_ylim((y_min, y_max))
         else:
-            axs[0][variants.index(variant)].set_ylim((gymin0, gymax0))
-        axs[0][variants.index(variant)].tick_params(axis="x", pad=1)
-        axs[0][variants.index(variant)].grid(axis="y", linestyle="--", alpha=0.5)
+            axs[0][configs.index(config)].set_ylim((gymin0, gymax0))
+        axs[0][configs.index(config)].tick_params(axis="x", pad=1)
+        axs[0][configs.index(config)].grid(axis="y", linestyle="--", alpha=0.5)
         if y_min != float("-inf") and y_max != float("inf"):
-            axs[1][variants.index(variant)].set_ylim((y_min, y_max))
+            axs[1][configs.index(config)].set_ylim((y_min, y_max))
         else:
-            axs[1][variants.index(variant)].set_ylim((gymin1, gymax1))
-        axs[1][variants.index(variant)].tick_params(axis="x", pad=1)
-        axs[1][variants.index(variant)].grid(axis="y", linestyle="--", alpha=0.5)
+            axs[1][configs.index(config)].set_ylim((gymin1, gymax1))
+        axs[1][configs.index(config)].tick_params(axis="x", pad=1)
+        axs[1][configs.index(config)].grid(axis="y", linestyle="--", alpha=0.5)
 
     axs[1][0].set_ylabel(
         "norm thr.",
@@ -317,19 +314,19 @@ def draw(
 
 def main(
     ts_files: list[str] = ["./ts.pkl"],
-    variants: list[str] = ["default"],
-    frameworks: list[Framework] = [Framework.FSDPv2],
+    configs: list[str] = ["default"],
     use_elapsed: bool = False,
     adjust_steps: int = 3,
     wait_steps: int = 50,
     y_max: float = float("inf"),
     y_min: float = float("-inf"),
     paper_mode: PaperMode = PaperMode(),
-    filename: str = "lead_and_throughput.png",
+    figsize: tuple[float, float] = (7.16, 3.5),
+    filename: str = "lead_and_throughput.pdf",
 ):
-    fig = Figure()
-    input_data = get_data(ts_files, variants, frameworks)
-    draw(fig, input_data, use_elapsed, adjust_steps, wait_steps, y_max, y_min, paper_mode)
+    fig = Figure(figsize=figsize)
+    input_data = get_data(ts_files, configs)
+    draw(fig, input_data, use_elapsed, adjust_steps, wait_steps, y_max, y_min, paper_mode=paper_mode)
 
     fig.savefig(filename, dpi=300)
 

@@ -1,7 +1,7 @@
 """Per-GPU CDFs of overlap ratio and normalized duration for f_attn_op.
 
 For a single operator (default f_attn_op), shows per-GPU CDFs of overlap
-ratio (dashed) and elapsed duration (solid) for each variant.
+ratio (dashed) and elapsed duration (solid) for each config.
 (Paper Figure: overlap_gpus.pdf)
 """
 
@@ -12,68 +12,66 @@ from matplotlib.figure import Figure
 
 from chopper.common.colors import rgb
 from chopper.common.load import get_overlap_df
-from chopper.common.annotations import Framework, PaperMode
+from chopper.common.annotations import PaperMode
 
 
 def get_data(
     ts_files: list[str] = ["./ts.pkl"],
-    variants: list[str] = ["default"],
-    frameworks: list[Framework] = [Framework.FSDPv2],
+    configs: list[str] = ["default"],
     operator: str = "f_attn_op",
     iter_idxs: range = range(-5, -2, 1),
 ):
-    """Load overlap data for a single operator across variants and GPUs.
+    """Load overlap data for a single operator across configs and GPUs.
 
-    Normalizes per-GPU elapsed by the per-GPU minimum elapsed across variants.
+    Normalizes per-GPU elapsed by the per-GPU minimum elapsed across configs.
 
     Args:
         ts_files: List of ts.pkl trace files
-        variants: Variant labels
-        frameworks: Framework type per ts_file
+        configs: Config labels (e.g. "b1s4", "b2s8")
         operator: Operator name to analyze
         iter_idxs: Iteration indices to select
 
     Returns:
-        Tuple (overlap_data, gpus, operator) where overlap_data maps variant ->
+        Tuple (overlap_data, gpus, operator) where overlap_data maps config ->
         DataFrame of operator entries with normalized 'elapsed' and 'op_idx'
     """
     data = {}
-    for ts_file, variant, framework in zip(ts_files, variants, frameworks):
-        data[variant] = get_overlap_df(
-            ts_file, framework=framework, iter_idxs=list(iter_idxs)
+    for ts_file, config in zip(ts_files, configs):
+        data[config] = get_overlap_df(
+            ts_file, iter_idxs=list(iter_idxs)
         )
 
     overlap_data = {}
-    vendor_min_elapsed = {}
+    config_min_elapsed = {}
     gpus = None
 
-    for vendor in variants:
-        operators = data[vendor]["operator-name"].unique()
-        assert operator in operators, f"operator {operator} not found in {vendor}"
-        cur_gpus = sorted(data[vendor]["gpu"].unique())
+    for config in configs:
+        operators = data[config]["operator-name"].unique()
+        assert operator in operators, f"operator {operator} not found in {config}"
+        cur_gpus = sorted(data[config]["gpu"].unique())
         if gpus is None:
             gpus = cur_gpus
         else:
-            assert gpus == cur_gpus, "GPUs do not match across variants"
+            assert gpus == cur_gpus, "GPUs do not match across configs"
 
-        op_mask = data[vendor]["operator-name"] == operator
-        sub = data[vendor][op_mask].copy()
+        op_mask = data[config]["operator-name"] == operator
+        sub = data[config][op_mask].copy()
         sub["op_idx"] = sub.groupby("gpu").cumcount()
-        overlap_data[vendor] = sub
+        overlap_data[config] = sub
 
         for gpu in gpus:
             min_elapsed = np.min(sub["elapsed"])
-            vendor_min_elapsed[gpu] = min(
-                vendor_min_elapsed.get(gpu, float("inf")), min_elapsed
+            config_min_elapsed[gpu] = min(
+                config_min_elapsed.get(gpu, float("inf")), min_elapsed
             )
 
-    for vendor in variants:
-        overlap_data[vendor]["elapsed"] = overlap_data[vendor]["elapsed"].astype(float)
+    for config in configs:
+        overlap_data[config]["elapsed"] = overlap_data[config]["elapsed"].astype(float)
         for gpu in gpus:
-            gpu_mask = overlap_data[vendor]["gpu"] == gpu
-            overlap_data[vendor].loc[gpu_mask, "elapsed"] = (
-                overlap_data[vendor].loc[gpu_mask, "elapsed"]
-                / vendor_min_elapsed[gpu]
+            gpu_mask = overlap_data[config]["gpu"] == gpu
+            overlap_data[config].loc[gpu_mask, "elapsed"] = (
+                overlap_data[config].loc[gpu_mask, "elapsed"]
+                / config_min_elapsed[gpu]
             )
 
     return overlap_data, gpus, operator
@@ -110,22 +108,21 @@ def draw(
         for r in range(n_rows)
     )
 
-    vendors = sorted(set(k.split("-")[0] for k in data.keys()))
+    params = list(data.keys())
     rgb_colors = (rgb(0xD4, 0x11, 0x59), rgb(0x1A, 0x85, 0xFF))
-    color_dict = {vc: rgb_colors[i] for i, vc in enumerate(vendors)}
+    color_dict = {config: rgb_colors[i % len(rgb_colors)] for i, config in enumerate(params)}
     line_color_dict = {
-        vc: (
-            max(0, rgb_colors[i][0] - 0.3),
-            max(0, rgb_colors[i][1] - 0.3),
-            max(0, rgb_colors[i][2] - 0.3),
+        config: (
+            max(0, rgb_colors[i % len(rgb_colors)][0] - 0.3),
+            max(0, rgb_colors[i % len(rgb_colors)][1] - 0.3),
+            max(0, rgb_colors[i % len(rgb_colors)][2] - 0.3),
         )
-        for i, vc in enumerate(vendors)
+        for i, config in enumerate(params)
     }
 
     for i, gpu in enumerate(gpus):
         ax = axs[i // n_cols][i % n_cols]
         for setup in data.keys():
-            vendor = setup.split("-")[0]
             tmp_df = data[setup][data[setup]["gpu"] == gpu].copy()
             tmp_df["overlap_ratio"] /= 100
 
@@ -151,14 +148,14 @@ def draw(
                 ax.plot(
                     sorted(overlap_ratio["median"]), prob,
                     linestyle="--", marker=marker,
-                    color=line_color_dict[vendor], linewidth=1.0,
+                    color=line_color_dict[setup], linewidth=1.0,
                 )
             if elapsed.index.max() and elapsed.index.max() > 0:
                 prob = (elapsed.index + 1) / elapsed.index.max()
                 ax.plot(
                     sorted(elapsed["median"]), prob,
                     linestyle="-", marker=marker,
-                    color=line_color_dict[vendor], linewidth=1.0,
+                    color=line_color_dict[setup], linewidth=1.0,
                 )
 
         ax.grid(axis="y", linestyle="--", alpha=0.5)
@@ -185,7 +182,7 @@ def draw(
         ax.set_xlim((-0.05, 2.15))
         ax.set_title(f"GPU{gpu}", fontsize=8, pad=2)
 
-    legend_handles = [mpatches.Patch(color=color_dict[v], label=v) for v in vendors]
+    legend_handles = [mpatches.Patch(color=color_dict[config], label=config) for config in params]
     line_handles = [
         Line2D([0], [0], color="black", linewidth=1, linestyle="--", label="overlap ratio"),
         Line2D([0], [0], color="black", linewidth=1, linestyle="-", label="duration"),
@@ -193,7 +190,7 @@ def draw(
     fig.legend(
         handles=legend_handles,
         loc="upper left",
-        ncol=len(vendors),
+        ncol=len(params),
         borderpad=0.17,
         handletextpad=0.4,
         columnspacing=0.6,
@@ -223,19 +220,19 @@ def draw(
 
 def main(
     ts_files: list[str] = ["./ts.pkl"],
-    variants: list[str] = ["default"],
-    frameworks: list[Framework] = [Framework.FSDPv2],
+    configs: list[str] = ["default"],
     operator: str = "f_attn_op",
     iter_start: int = -5,
     iter_stop: int = -2,
     iter_step: int = 1,
     n_cols: int = 4,
     paper_mode: PaperMode = PaperMode(),
-    filename: str = "overlap_gpus.png",
+    figsize: tuple[float, float] = (7.16, 2.5),
+    filename: str = "overlap_gpus.pdf",
 ):
-    fig = Figure()
+    fig = Figure(figsize=figsize)
     iter_idxs = range(iter_start, iter_stop, iter_step)
-    input_data = get_data(ts_files, variants, frameworks, operator, iter_idxs)
+    input_data = get_data(ts_files, configs, operator, iter_idxs)
     draw(fig, input_data, n_cols, paper_mode)
     fig.savefig(filename, dpi=300)
 

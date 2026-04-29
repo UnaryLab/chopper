@@ -1,4 +1,3 @@
-import enum
 from dataclasses import dataclass
 from pandas import DataFrame, Series
 
@@ -30,49 +29,29 @@ class PaperMode:
     legend_bbox: tuple[float, float] | None = None
 
 
-class Framework(enum.IntEnum):
-    """Training framework enumeration for trace processing.
-    
-    Attributes:
-        FSDPv1: PyTorch FSDP version 1
-        FSDPv2: PyTorch FSDP version 2
-    """
-    FSDPv1 = 1
-    FSDPv2 = 2
-
-
-def no_overlap_mask(df: DataFrame, framework: Framework = Framework.FSDPv1) -> Series:
+def no_overlap_mask(df: DataFrame) -> Series:
     """Create a boolean mask for non-overlapping computation kernels.
-    
+
     Identifies kernels that do not overlap with communication operations,
-    based on framework-specific operator patterns and NCCL kernel names.
-    
+    based on FSDPv2 operator patterns and NCCL kernel names.
+
     Args:
         df: DataFrame containing trace data with 'name' and 'operator-name' columns
-        framework: Framework enum specifying which framework patterns to use
-        
+
     Returns:
         Boolean Series where True indicates non-overlapping kernels
     """
     nccl_mask = df["name"].str.startswith("ncclDevKernel")
-    match framework:
-        case Framework.FSDPv1:
-            return ~(df["operator-name"].isin((
-                'b_FullyShardedDataParallel._pre_forward',
-                'f_FullyShardedDataParallel._post_backward_hook',
-                'f_FullyShardedDataParallel._pre_backward_prefetch',
-            )) | nccl_mask)
-        case Framework.FSDPv2:
-            pattern = '|'.join((
-                'FSDP::post_backward_reduce',
-                'FSDP::pre_forward',
-                'FSDP::all_gather_copy_out',
-                'FSDP::all_gather',
-            ))
-            return ~(
-                df["operator-name"].str.contains(pattern, na=False, regex=True)
-                | nccl_mask
-            )
+    pattern = '|'.join((
+        'FSDP::post_backward_reduce',
+        'FSDP::pre_forward',
+        'FSDP::all_gather_copy_out',
+        'FSDP::all_gather',
+    ))
+    return ~(
+        df["operator-name"].str.contains(pattern, na=False, regex=True)
+        | nccl_mask
+    )
 
 
 def assign_chunks(df: DataFrame) -> DataFrame:
@@ -87,31 +66,13 @@ def assign_chunks(df: DataFrame) -> DataFrame:
     Returns:
         DataFrame with added 'chunk' column containing 'fwd', 'bwd', or 'opt'
     """
-    opt_grad_mask = (df['operator-name'].str.startswith(
-        'f_Optimizer', na=False) |
-        df['operator-name'].str.startswith(
-        'f_b_ga', na=False) |
-        df['operator-name'].str.startswith(
-        'f_b_ar', na=False)
-    )
-
-    bwd_mask = (
-        (df['operator-name'].str.startswith('b_', na=False) & ((df['operator-name'] != 'b_FullyShardedDataParallel._pre_forward')) |
-         (
-             (df['operator-name'] == 'b_FullyShardedDataParallel._pre_forward') &
-            (~df['name'].str.startswith("ncclDevKernel", na=False) | df['name_cpu_op'].str.endswith('allreduce', na=False)) &
-             (df['name_cpu_op'] != 'aten::copy_')
-        )) |
-        (df['operator-name'] == 'f_FullyShardedDataParallel._post_backward_hook') |
-        (df['operator-name'] == 'f_FullyShardedDataParallel._pre_backward_prefetch') |
-        df['operator-name'].str.startswith('f_b_', na=False)
-    ) & ~opt_grad_mask
-
-    fwd_mask = ~opt_grad_mask & ~bwd_mask & ~df['operator-name'].isna()
+    opt_mask = df['operator-name'].str.startswith('opt_', na=False)
+    bwd_mask = df['operator-name'].str.startswith('b_', na=False) & ~opt_mask
+    fwd_mask = ~opt_mask & ~bwd_mask & ~df['operator-name'].isna()
 
     df.loc[fwd_mask, 'chunk'] = 'fwd'
     df.loc[bwd_mask, 'chunk'] = 'bwd'
-    df.loc[opt_grad_mask, 'chunk'] = 'opt'
+    df.loc[opt_mask, 'chunk'] = 'opt'
     return df
 
 
@@ -140,6 +101,11 @@ def fix_names(df: DataFrame) -> DataFrame:
     df.loc[fix_mask, 'operator-name'] = df.loc[
         fix_mask,
         'operator-name'].str.replace('_fc_', '_mlp_')
+
+    fix_mask = df['operator-name'].str.contains('_ffn_', na=False)
+    df.loc[fix_mask, 'operator-name'] = df.loc[
+        fix_mask,
+        'operator-name'].str.replace('_ffn_', '_mlp_')
     return df
 
 

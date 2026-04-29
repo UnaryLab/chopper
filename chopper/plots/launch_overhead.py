@@ -1,4 +1,3 @@
-import pandas as pd
 import numpy as np
 import re
 from matplotlib.lines import Line2D
@@ -21,8 +20,6 @@ from chopper.common.trace_metrics import (
     derive_prep_overhead,
     derive_call_overhead,
 )
-
-from chopper.common.annotations import Framework
 
 
 def agg(
@@ -73,27 +70,25 @@ def agg(
 
 def get_data(
     ts_files: list[str] = ["./ts.pkl"],
-    frameworks: list[Framework] = [Framework.FSDPv2],
-    variants: list[str] = ["default"],
+    configs: list[str] = ["default"],
 ):
     """Load and process kernel launch overhead metrics.
-    
+
     Processes trace files to extract launch overhead, prep overhead, and call
     overhead metrics for different training operators. Filters out communication
     kernels and aggregates metrics by operator and layer, normalizing to the
-    maximum overhead value across variants.
-    
+    maximum overhead value across configs.
+
     Args:
         ts_files: List of paths to trace pickle files
-        frameworks: List of Framework enum values for each trace file
-        variants: List of variant names corresponding to each trace file
-        
+        configs: Config labels (e.g. "b1s4", "b2s8")
+
     Returns:
-        Dict mapping variant names to processed DataFrames with normalized overhead metrics
+        Dict mapping config names to processed DataFrames with normalized overhead metrics
     """
     data = {
-        variant: load_pickle(ts_file)
-        for ts_file, variant in zip(ts_files, variants)
+        config: load_pickle(ts_file)
+        for ts_file, config in zip(ts_files, configs)
     }
 
     metrics = (
@@ -102,14 +97,15 @@ def get_data(
         "Call Overhead",
     )
     max_ov_sub = 0
-    for fw, setup in zip(frameworks, data.keys()):
+    for setup in data.keys():
         data[setup]["layer"] = data[setup]["layer"].fillna(-1)
         weird_mask = data[setup]["iteration"].isna()
-        weird_df = data[setup][weird_mask]
-        max_weird_ts = weird_df["ts"].max()
-        min_norm_ts = data[setup][~weird_mask]["ts"].min()
-        assert min_norm_ts > max_weird_ts, "Nan iteration isn't at the start"
-        data[setup] = data[setup][~weird_mask]
+        if weird_mask.any():
+            weird_df = data[setup][weird_mask]
+            max_weird_ts = weird_df["ts"].max()
+            min_norm_ts = data[setup][~weird_mask]["ts"].min()
+            assert min_norm_ts > max_weird_ts, "Nan iteration isn't at the start"
+            data[setup] = data[setup][~weird_mask]
 
         data[setup] = data[setup][data[setup]["name"] != "Memcpy HtoD (Host -> Device)"]
 
@@ -118,7 +114,7 @@ def get_data(
 
         data[setup] = fix_names(data[setup])
 
-        overlap_mask = no_overlap_mask(data[setup], framework=fw)
+        overlap_mask = no_overlap_mask(data[setup])
 
         data[setup] = agg(
             data[setup][overlap_mask & ~nan_chunk_mask],
@@ -178,16 +174,7 @@ def draw(
         rgb(0xFC, 0x8D, 0x62),
     )
 
-    hatches = (
-        None,
-        "\\\\\\\\\\",
-    )
-
-    setups = tuple(data.keys())
-    params = sorted(
-        set(s.split("-")[1] for s in setups), key=lambda x: re.findall(r"\d+", x)[::-1]
-    )
-    variants = sorted(set(s.split("-")[0] for s in setups))
+    params = list(data.keys())
 
     metrics = (
         "Prep Overhead",
@@ -195,7 +182,6 @@ def draw(
     )
 
     bar_color = {m: rgb_colors[i] for i, m in enumerate(metrics)}
-    bar_hatch = {m: hatches[i] for i, m in enumerate(variants)}
 
     n_rows = 1
     n_cols = len(ops) + (1 if two_axes else 0)
@@ -224,8 +210,7 @@ def draw(
     if two_axes:
         axs[len(lops)].set_visible(False)
 
-    for s in setups:
-        variant = s.split("-")[0]
+    for setup in params:
         for ax_idx in ax_idxs:
             ax = axs[ax_idx]
             ax.yaxis.set_major_locator(MaxNLocator(integer=True, nbins=3))
@@ -274,63 +259,45 @@ def draw(
             ax.tick_params(axis="x", which="major", pad=1, rotation=65)
             ax.set_xticklabels(params)
             ax.set_xlim(-0.5, len(params) - 1 + 0.5)
-            bar_width = 0.9 / len(variants)
-            offset = -bar_width / 2 * (len(variants) - 1) + bar_width * variants.index(
-                variant
-            )
+            bar_width = 0.9
             ax.grid(axis="y", linestyle="--", alpha=0.5)
 
             bottom = 0
 
-            param = s.split("-")[1]
-
             op = ops[ax_idxs.index(ax_idx)]
             ax.set_title(op, pad=5, fontsize=8)
             med_p = (
-                data[s].groupby("operator-name").get_group(op)["Prep Overhead"].mean()
+                data[setup].groupby("operator-name").get_group(op)["Prep Overhead"].mean()
             )
             med_c = (
-                data[s].groupby("operator-name").get_group(op)["Call Overhead"].mean()
+                data[setup].groupby("operator-name").get_group(op)["Call Overhead"].mean()
             )
 
-            tick = params.index(param)
+            tick = params.index(setup)
 
             ax.bar(
-                tick + offset,
+                tick,
                 med_c,
                 width=bar_width * 0.9,
                 bottom=bottom,
                 color=bar_color["Call Overhead"],
                 alpha=0.99,
-                hatch=bar_hatch[variant],
             )
 
             bottom += med_c
 
             ax.bar(
-                tick + offset,
+                tick,
                 med_p,
                 width=bar_width * 0.9,
                 bottom=bottom,
                 color=bar_color["Prep Overhead"],
                 alpha=0.99,
-                hatch=bar_hatch[variant],
             )
 
     legend_handles = [
         mpatches.Patch(color=bar_color[m], label=m) for m in reversed(metrics)
     ]
-    legend_handles.extend(
-        [
-            mpatches.Patch(
-                facecolor="white",
-                edgecolor="black",
-                label=m,
-                hatch=bar_hatch[m],
-            )
-            for m in variants
-        ]
-    )
 
     if two_axes:
         for i in range(len(lops)):
@@ -375,3 +342,23 @@ def draw(
         handlelength=0.5,
         frameon=False,
     )
+
+
+def main(
+    ts_files: list[str] = ["./ts.pkl"],
+    configs: list[str] = ["default"],
+    lops: list[str] = ["f_ie", "b_ga", "opt_step"],
+    rops: list[str] = ["f_attn_n", "b_mlp_dp", "b_ie"],
+    two_axes: bool = True,
+    figsize: tuple[float, float] = (7.16, 2.0),
+    filename: str = "launch_overhead.pdf",
+):
+    fig = Figure(figsize=figsize)
+    input_data = get_data(ts_files, configs)
+    draw(fig, input_data, lops, rops, two_axes)
+    fig.savefig(filename, dpi=300)
+
+
+if __name__ == "__main__":
+    import fire
+    fire.Fire(main)

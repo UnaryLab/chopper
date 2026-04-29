@@ -5,37 +5,33 @@ from chopper.common.load import get_straggler_df
 from chopper.common.colors import okabe_ito
 from matplotlib.ticker import MaxNLocator
 from matplotlib.figure import Figure
-from chopper.common.annotations import Framework, PaperMode
+from chopper.common.annotations import PaperMode
 import matplotlib.patches as mpatches
 
 
 def get_data(
     ts_files: list[str] = ["./ts.pkl"],
-    variants: list[str] = ["default"],
-    frameworks: list[Framework] = [Framework.FSDPv2],
+    configs: list[str] = ["default"],
 ):
     """Load and process per-GPU straggler metrics.
-    
+
     Extracts straggler lead values for each individual GPU to analyze
     per-GPU performance imbalance across training iterations.
-    
+
     Args:
         ts_files: List of paths to trace pickle files
-        variants: List of variant names corresponding to each trace file
-        frameworks: List of Framework enum values for each trace file
-        
+        configs: Config labels (e.g. "b1s4", "b2s8")
+
     Returns:
         Tuple containing:
             - dfs: List of processed DataFrames with per-GPU straggler metrics
-            - variants: List of variant names
+            - configs: List of config names
     """
     dfs = [
-        get_straggler_df(
-            ts_file, agg_meth="max", framework=fw, kernel_name=True
-        )
-        for ts_file, fw in zip(ts_files, frameworks)
+        get_straggler_df(ts_file, agg_meth="max", kernel_name=True)
+        for ts_file in ts_files
     ]
-    return dfs, variants
+    return dfs, configs
 
 
 def draw(
@@ -59,13 +55,13 @@ def draw(
         input_data: Tuple from get_data() containing straggler DataFrames
         idx_start: Starting iteration index
         idx_end: Ending iteration index (-1 for last)
-        y_maxs: List of maximum y-axis limits, one per row (variant)
-        y_mins: List of minimum y-axis limits, one per row (variant)
+        y_maxs: List of maximum y-axis limits, one per row (config)
+        y_mins: List of minimum y-axis limits, one per row (config)
         alpha: Transparency of scatter points (0-1)
         paper_mode: PaperMode settings for publication-quality figures
     """
 
-    dfs, variants = input_data
+    dfs, configs = input_data
 
     n_gpus: int | None = None
     for df in dfs:
@@ -74,7 +70,7 @@ def draw(
         else:
             assert n_gpus == df["gpu"].nunique(), "number of GPUs don't match"
 
-    n_rows = len(variants)
+    n_rows = len(configs)
     n_cols = n_gpus
 
     assert n_gpus is not None, "n_gpus should not be None"
@@ -105,9 +101,9 @@ def draw(
     gymin0: float = 0.0
     gymax0: float = 0.0
     max_lead = 0
-    for i, (variant, df) in enumerate(zip(variants, dfs)):
+    for i, (config, df) in enumerate(zip(configs, dfs)):
         for gpu in range(n_gpus):
-            gpu_slot = tmp_df.setdefault(variant, {})
+            gpu_slot = tmp_df.setdefault(config, {})
             ax = axs[i][gpu]
             iters = sorted(df["iteration"].unique())
             tmp_df_ = (
@@ -122,12 +118,12 @@ def draw(
             max_lead = max(max_lead, tmp_df_["s-value"].max())
             gpu_slot[gpu] = tmp_df_
 
-    for i, variant in enumerate(variants):
+    for i, config in enumerate(configs):
         for gpu in range(n_gpus):
             ax = axs[i][gpu]
             ax.yaxis.set_major_locator(MaxNLocator(nbins=3))
             ax.grid(axis="y", linestyle="--", alpha=0.5)
-            tmp_df_ = tmp_df[variant][gpu]
+            tmp_df_ = tmp_df[config][gpu]
             iters = sorted(tmp_df_["iteration"].unique())
             assert tmp_df_["ts_first"].is_monotonic_increasing
             iter_agg = tmp_df_.groupby("iteration")["index"].agg(
@@ -211,8 +207,7 @@ def draw(
 
 def main(
     ts_files: list[str] = ["./ts.pkl"],
-    variants: list[str] = ["default"],
-    frameworks: list[Framework] = [Framework.FSDPv2],
+    configs: list[str] = ["default"],
     idx_start: int = 0,
     idx_end: int = -1,
     y_maxs: list[float] = [float("inf")],
@@ -223,7 +218,7 @@ def main(
     filename: str = "straggler_per_gpu.png",
 ):
     fig = Figure()
-    input_data = get_data(ts_files, variants, frameworks)
+    input_data = get_data(ts_files, configs)
     draw(fig, input_data, idx_start, idx_end, y_maxs, y_mins, alpha, s, paper_mode)
     fig.savefig(filename, dpi=300)
 

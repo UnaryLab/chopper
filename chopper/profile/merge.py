@@ -1,675 +1,276 @@
-"""Trace file merging and processing utilities.
-
-Provides functions for parsing, merging, and processing distributed training
-trace files from ROCm profiling tools. Combines GPU kernel traces, CPU operations,
-CUDA runtime calls, and hardware performance counters into unified DataFrames.
-"""
-from concurrent.futures import ProcessPoolExecutor
+"""Full trace merge: parse PyTorch Chrome traces into a kernel DataFrame."""
+import json
+import time
+import re
 import numpy as np
 import pandas as pd
-import ijson
-import re
-from argparse import ArgumentParser
-from collections import Counter
-from functools import partial
-from decimal import Decimal
-from chopper.common.printing import info, warn, err
+from concurrent.futures import ProcessPoolExecutor
 
 
-def dtoi(ts):
-    return np.int64(ts * Decimal('1000'))
+def assign_ranges(timestamps, ranges):
+    """Assign labels from (start, end, label) ranges to timestamps.
+    Ranges must be sorted longest-first so innermost overwrites."""
+    ts_arr = np.array(timestamps)
+    sort_idx = ts_arr.argsort()
+    sorted_ts = ts_arr[sort_idx]
+    result = np.empty(len(sorted_ts), dtype=object)
+    for start, end, label in ranges:
+        lo = np.searchsorted(sorted_ts, start, side='left')
+        hi = np.searchsorted(sorted_ts, end, side='right')
+        result[lo:hi] = label
+    final = np.empty_like(result)
+    final[sort_idx] = result
+    return final
 
 
-def fwdbwd_link(line, data):
-    ts = dtoi(line['ts'])
-    id = line['id']
-    bwd = "bp" in line
+def parse(filename):
+    with open(filename) as f:
+        trace = json.load(f)
 
-    data.append({
-        'ts': ts,
-        'id': id,
-        'bwd': bwd,
-    })
+    cpu_ops = {}
+    annotations = []
+    fwdbwd = {}
+    kernels = []
+    runtime = {}
 
+    for e in trace['traceEvents']:
+        cat = e.get('cat', '')
+        if cat == 'cpu_op':
+            cpu_ops[e['args']['External id']] = {
+                'name': e['name'],
+                'ts': int(e['ts'] * 1000),
+                'dur': int(e['dur'] * 1000),
+                'seq': e['args'].get('Sequence number'),
+            }
+        elif cat == 'user_annotation':
+            ts = int(e['ts'] * 1000)
+            dur = int(e['dur'] * 1000)
+            annotations.append({'name': e['name'], 'ts': ts, 'end_ts': ts + dur})
+        elif cat == 'fwdbwd':
+            fid = e['id']
+            if fid not in fwdbwd: fwdbwd[fid] = {}
+            fwdbwd[fid]['bwd' if 'bp' in e else 'fwd'] = int(e['ts'] * 1000)
+        elif cat == 'kernel':
+            kernels.append({
+                'name': e['name'],
+                'ts': int(e['ts'] * 1000),
+                'dur': int(e['dur'] * 1000),
+                'correlation': e['args']['correlation'],
+            })
+        elif cat == 'cuda_runtime':
+            runtime[e['args']['correlation']] = {
+                'ext_id': e['args'].get('External id'),
+                'ts': int(e['ts'] * 1000),
+            }
 
-def cpu_op_link(line, data):
-    args = line['args']
-
-    if 'Collective name' in args:
-        name = f"{line['name']}:{args['Collective name']}"
-    else:
-        name = line['name']
-    data.append({
-        'ext_id': args['External id'],
-        'seq_num': args['Sequence number'] if 'Sequence number' in args else None,
-        'ts': dtoi(line['ts']),
-        'dur': dtoi(line['dur']),
-        'name': name,
-    })
-
-
-def kernel_link(line, data):
-    data.append({
-        'ext_id': line['args']['External id'] if 'External id' in line['args'] else None,
-        'name': line['name'],
-        'ts': dtoi(line['ts']),
-        'dur': dtoi(line['dur']),
-        'correlation': line['args']['correlation'],
-        # 'grid': line['args']['grid'],
-        # 'block': line['args']['block'],
-    })
-
-
-def user_annotation_link(line, data):
-    name = line['name']
-
-    if re.fullmatch(r"Layer\d+", name):
-        data.append({
-            'type': 'layer',
-            'ts': dtoi(line['ts']),
-            'dur': dtoi(line['dur']),
-            'value': int(name.split("Layer")[1]),
-        })
-
-    elif re.fullmatch(r"Iteration\d+", name):
-        data.append({
-            'type': 'iteration',
-            'ts': dtoi(line['ts']),
-            'dur': dtoi(line['dur']),
-            'value': int(name.split("Iteration")[1]),
-        })
-
-    else:
-        data.append({
-            'type': 'operator-name',
-            'ts': dtoi(line['ts']),
-            'dur': dtoi(line['dur']),
-            'value': name,
-        })
+    return cpu_ops, annotations, fwdbwd, kernels, runtime
 
 
-def cuda_runtime_link(line, data):
-    data.append({
-        'name': line['name'],
-        'ts': dtoi(line['ts']),
-        'dur': dtoi(line['dur']),
-        'correlation': line['args']['correlation'],
-        'ext_id': line['args']['External id'] if 'External id' in line['args'] else None,
-    })
+def classify_annotations(annotations):
+    """Split annotations into layers, iterations, and operator annotations."""
+    layers = []
+    iterations = []
+    ops = []
+    for a in annotations:
+        if (m := re.fullmatch(r'Layer(\d+)', a['name'])):
+            layers.append((a['ts'], a['end_ts'], int(m.group(1))))
+            continue
+        if (m := re.fullmatch(r'Iteration(\d+)', a['name'])):
+            iterations.append((a['ts'], a['end_ts'], int(m.group(1))))
+            continue
+        ops.append((a['ts'], a['end_ts'], a['name']))
+
+    # Sort longest-first so innermost overwrites
+    layers.sort(key=lambda r: r[1] - r[0], reverse=True)
+    iterations.sort(key=lambda r: r[1] - r[0], reverse=True)
+    ops.sort(key=lambda r: r[1] - r[0], reverse=True)
+    return layers, iterations, ops
 
 
-def gpu_memcpy_link(line, data):
-    data.append({
-        'name': line['name'],
-        'device': line['args']['device'],
-        # 'kind': line['args']['kind'],
-        'bytes': line['args']['bytes'],
-        'ts': dtoi(line['ts']),
-        'dur': dtoi(line['dur']),
-        'correlation': line['args']['correlation'],
-        'ext_id': line['args']['External id'] if 'External id' in line['args'] else None,
-    })
+def link_fwdbwd(cpu_ops, op_ranges, fwdbwd, layer_ranges):
+    """Link fwd<->bwd cpu_ops.
+    Returns (ext_id -> f_/b_ annotation name, ext_id -> layer)."""
+    ts_to_ext = {op['ts']: eid for eid, op in cpu_ops.items()}
+    fwd_data = []
+    fwd_timestamps = []
+
+    for fid, ep in fwdbwd.items():
+        assert 'fwd' in ep and 'bwd' in ep, f"fwdbwd {fid} missing endpoint: {ep}"
+        fwd_ext = ts_to_ext.get(ep['fwd'])
+        bwd_ext = ts_to_ext.get(ep['bwd'])
+        assert fwd_ext is not None, f"fwdbwd {fid} fwd ts {ep['fwd']} not in cpu_ops"
+        assert bwd_ext is not None, f"fwdbwd {fid} bwd ts {ep['bwd']} not in cpu_ops"
+        fwd_data.append((fwd_ext, bwd_ext))
+        fwd_timestamps.append(cpu_ops[fwd_ext]['ts'])
+
+    anns = assign_ranges(fwd_timestamps, op_ranges)
+    fwd_layers = assign_ranges(fwd_timestamps, layer_ranges)
+
+    results = {}
+    fwdbwd_layers = {}
+    for i, (fwd_ext, bwd_ext) in enumerate(fwd_data):
+        ann = anns[i]
+        assert ann is not None, f"cpu_op {fwd_ext} ({cpu_ops[fwd_ext]['name']}) has no annotation"
+        results[fwd_ext] = 'f_' + ann
+        results[bwd_ext] = 'b_' + ann
+        fwdbwd_layers[fwd_ext] = fwd_layers[i]
+        fwdbwd_layers[bwd_ext] = fwd_layers[i]
+
+    return results, fwdbwd_layers
 
 
-def gpu_memset_link(line, data):
-    data.append({
-        'name': line['name'],
-        'device': line['args']['device'],
-        # 'kind': line['args']['kind'],
-        'ts': dtoi(line['ts']),
-        'dur': dtoi(line['dur']),
-        'correlation': line['args']['correlation'],
-        'ext_id': line['args']['External id'] if 'External id' in line['args'] else None,
-    })
+def promote(cpu_ops, labeled):
+    """Promote fwdbwd labels up to parent cpu_ops with the same sequence number.
+    This ensures siblings of the linked op also get covered when we propagate down."""
+    seq_to_label = {}
+    for eid, label in labeled.items():
+        seq = cpu_ops[eid].get('seq')
+        if seq is not None:
+            seq_to_label[seq] = label
 
-
-def json_to_pandas(rocprof_json_filename: str) -> dict[str, pd.DataFrame]:
-    """Parse ROCm profile JSON file into pandas DataFrames.
-    
-    Streams JSON file and extracts kernel, CPU operation, CUDA runtime,
-    and user annotation events into separate DataFrames.
-    
-    Args:
-        rocprof_json_filename: Path to ROCm profile JSON file
-        
-    Returns:
-        Dict mapping event types to DataFrames
-    """
-    cat_func_map = {
-        'fwdbwd': fwdbwd_link,
-        'cpu_op': cpu_op_link,
-        'kernel': kernel_link,
-        'user_annotation': user_annotation_link,
-        'cuda_runtime': cuda_runtime_link,
-        'gpu_memcpy': gpu_memcpy_link,
-        'gpu_memset': gpu_memset_link,
-    }
-    cat_func_data: dict[str, list[dict]] = {
-        cat: [] for cat in cat_func_map.keys()
-    }
-
-    with open(rocprof_json_filename, 'r') as fp:
-        info("Reading timestamp data...")
-        ignore_cat: Counter[str] = Counter()
-        for line in ijson.items(fp, 'traceEvents.item'):
-            if 'cat' in line:
-                cat = line['cat']
-            else:
-                continue
-
-            if cat in cat_func_map:
-                cat_func_map[cat](
-                    line,
-                    cat_func_data[cat],
-                )
-            else:
-                ignore_cat.update((cat,))
-
-    for cat in ignore_cat:
-        warn(f"Ignoring cat: {cat} ({ignore_cat[cat]}x)")
-
-    result: dict[str, pd.DataFrame] = {}
-    for cat in cat_func_data.keys():
-        result[cat] = pd.DataFrame(cat_func_data[cat])
-
+    result = dict(labeled)
+    for eid, op in cpu_ops.items():
+        if eid in result:
+            continue
+        seq = op.get('seq')
+        if seq is not None and seq in seq_to_label:
+            result[eid] = seq_to_label[seq]
     return result
 
 
-def merge_df(left, right, on, suffixes, combine):
-    # WARN merge introduces NaN when no match
-    # which converts values to floats
-    if isinstance(on, tuple):
-        merged = pd.merge(
-            left,
-            right,
-            left_on=on[0],
-            right_on=on[1],
-            how="left",
-            suffixes=suffixes,
-        )
+def propagate(cpu_ops, labeled):
+    """Propagate labels to child cpu_ops. Returns ext_id -> label (expanded)."""
+    parents = [(cpu_ops[eid]['ts'], cpu_ops[eid]['ts'] + cpu_ops[eid]['dur'], label)
+               for eid, label in labeled.items()]
+    parents.sort(key=lambda p: p[1] - p[0], reverse=True)
+
+    unlabeled_eids = [eid for eid in cpu_ops if eid not in labeled]
+    unlabeled_ts = [cpu_ops[eid]['ts'] for eid in unlabeled_eids]
+    assigned = assign_ranges(unlabeled_ts, parents)
+
+    result = dict(labeled)
+    for i, eid in enumerate(unlabeled_eids):
+        # None is expected: some autograd backward ops (e.g. DivBackward0) aren't
+        # contained by any fwdbwd-labeled parent. These get picked up by assign_unlabeled.
+        if assigned[i] is not None:
+            result[eid] = assigned[i]
+    return result
+
+
+def assign_unlabeled(cpu_ops, labeled, op_ranges):
+    """Assign annotations to cpu_ops not covered by fwdbwd (opt, FSDP, etc)."""
+    unlabeled_eids = [eid for eid in cpu_ops if eid not in labeled]
+    unlabeled_ts = [cpu_ops[eid]['ts'] for eid in unlabeled_eids]
+    assigned = assign_ranges(unlabeled_ts, op_ranges)
+
+    result = dict(labeled)
+    for i, eid in enumerate(unlabeled_eids):
+        # None is expected: some cpu_ops occur outside any user_annotation range
+        # (e.g. during profiler init before training starts). These remain unlabeled.
+        if assigned[i] is not None:
+            result[eid] = assigned[i]
+    return result
+
+
+def build_kernel_df(cpu_ops, kernels, runtime, labels, layer_ranges, iter_ranges, fwdbwd_layers):
+    """Build final kernel DataFrame with all context."""
+    # Assign layer and iteration to all cpu_ops via timestamp ranges
+    all_eids = list(cpu_ops.keys())
+    all_ts = [cpu_ops[eid]['ts'] for eid in all_eids]
+    layers = assign_ranges(all_ts, layer_ranges)
+    iterations = assign_ranges(all_ts, iter_ranges)
+    eid_to_layer = {eid: layers[i] for i, eid in enumerate(all_eids)}
+    eid_to_iter = {eid: iterations[i] for i, eid in enumerate(all_eids)}
+
+    # fwdbwd_layers covers both fwd and bwd ops (bwd gets fwd's layer).
+    # Overwrite timestamp-based layers with these authoritative values.
+    eid_to_layer.update(fwdbwd_layers)
+
+    rows = []
+    for k in kernels:
+        rt = runtime.get(k['correlation'])
+        assert rt is not None, f"kernel {k['correlation']} has no runtime match"
+        ext_id = rt['ext_id']
+        cpu_op = cpu_ops.get(ext_id)
+        assert cpu_op is not None, f"ext_id {ext_id} not in cpu_ops"
+
+        rows.append({
+            'name': k['name'],
+            'ts': k['ts'],
+            'dur': k['dur'],
+            'ts_cuda_runtime': rt['ts'],
+            'name_cpu_op': cpu_op['name'],
+            'operator-name': labels.get(ext_id),
+            'layer': eid_to_layer.get(ext_id),
+            'iteration': eid_to_iter.get(ext_id),
+        })
+
+    return pd.DataFrame(rows)
+
+
+def parse_trace(filename):
+    """Full pipeline: parse trace -> kernel DataFrame."""
+    cpu_ops, annotations, fwdbwd, kernels, runtime = parse(filename)
+    layer_ranges, iter_ranges, op_ranges = classify_annotations(annotations)
+
+    # Step 1: fwd/bwd linking (also assigns layers to both fwd and bwd ops)
+    labeled, fwdbwd_layers = link_fwdbwd(cpu_ops, op_ranges, fwdbwd, layer_ranges)
+
+    # Step 2: promote labels up to parent cpu_ops with same sequence number
+    labeled = promote(cpu_ops, labeled)
+    fwdbwd_layers = promote(cpu_ops, fwdbwd_layers)
+
+    # Step 3: propagate labels and layers to children
+    labeled = propagate(cpu_ops, labeled)
+    fwdbwd_layers = propagate(cpu_ops, fwdbwd_layers)
+
+    # Step 4: assign annotations to remaining unlabeled ops
+    labeled = assign_unlabeled(cpu_ops, labeled, op_ranges)
+
+    # Step 5: build kernel DataFrame
+    return build_kernel_df(cpu_ops, kernels, runtime, labeled, layer_ranges, iter_ranges, fwdbwd_layers)
+
+
+def main(traces, pickles, output):
+    assert not (traces and pickles), "pass either -t or -p, not both"
+    assert traces or pickles, "pass -t (traces) or -p (pickles)"
+
+    t0 = time.time()
+
+    if pickles:
+        dfs = [pd.read_pickle(p) for p in pickles]
+        df = pd.concat(dfs, ignore_index=True)
+        df = df.sort_values('ts').reset_index(drop=True)
+        df.to_pickle(output)
+        t1 = time.time()
+        print(f"Merged {len(pickles)} pickles, {len(df)} kernels -> {output} in {t1-t0:.2f}s")
+        return
+
+    if len(traces) == 1:
+        df = parse_trace(traces[0])
+        df['gpu'] = 0
     else:
-        merged = pd.merge(
-            left,
-            right,
-            on=on,
-            how="left",
-            suffixes=suffixes,
-        )
-    for c in combine:
-        col0 = merged.get(f'{c}{suffixes[0]}')
-        col1 = merged.get(f'{c}{suffixes[1]}')
-        mask = ((col0 == col1) | (col0.isna() & col1.isna()))
-        assert mask.all(), f'combine column {c} does not match'
-
-        merged.drop(
-            columns=[f'{c}{suffixes[0]}'],
-            inplace=True,
-        )
-        merged.rename(columns={f'{c}{suffixes[1]}': c}, inplace=True)
-    return merged
-
-
-def add_cuda_runtime(json_data):
-    info("adding cuda runtime to gpu kernels...")
-    runtime_merge = partial(
-        merge_df,
-        right=json_data['cuda_runtime'],
-        on='correlation',
-        suffixes=('', '_cuda_runtime'),
-        # combine=('ext_id',)
-        combine=()
-    )
-    for key in ['kernel']:
-        json_data[key] = runtime_merge(json_data[key])
-
-
-def assign_annotation(json_data):
-    # TODO optimize this
-    ann_df = json_data['user_annotation']
-    cpu_df = json_data['cpu_op']
-
-    ann_df['end_ts'] = ann_df['ts'] + ann_df['dur']
-
-    for df_type in ('layer', 'iteration', 'operator-name'):
-        info(f"assigning {df_type} to cpu ops...")
-        to_merge = ann_df[ann_df['type'] == df_type][['ts', 'end_ts', 'value']].sort_values(
-            ['ts', 'end_ts'],
-            ascending=(True, False),
-        )
-
-        for _, row in to_merge.iterrows():
-            mask = (cpu_df['ts'] >= row['ts']) & (
-                cpu_df['ts'] <= row['end_ts'])
-            cpu_df.loc[mask, df_type] = row['value']
-
-    json_data['cpu_op'] = cpu_df
-
-
-def subordinate_cpu(json_data):
-    info("propagating operator-name to subordinate cpu ops...")
-
-    cpu_df = json_data['cpu_op']
-    cpu_df['end_ts'] = cpu_df['ts'] + cpu_df['dur']
-
-    is_root = ~cpu_df['id'].isna()
-    root_df = cpu_df[is_root].sort_values('ts').reset_index()
-    sub_df = cpu_df[~is_root].reset_index()
-
-    root_ts = root_df['ts'].values
-    root_end = root_ts + root_df['dur'].values
-    root_op = root_df['operator-name'].values
-    root_layer = root_df['layer'].values
-
-    sub_ts = sub_df['ts'].values
-    sub_indices = sub_df['index'].values
-
-    idx = np.searchsorted(root_ts, sub_ts, side='right') - 1
-
-    for i, root_idx in enumerate(idx):
-        ts = sub_ts[i]
-        while root_idx >= 0:
-            if ts <= root_end[root_idx]:
-                cpu_df.at[sub_indices[i], 'operator-name'] = root_op[root_idx]
-                cpu_df.at[sub_indices[i], 'layer'] = root_layer[root_idx]
-                break
-            root_idx -= 1
-
-    json_data['cpu_op'] = cpu_df
-
-
-def add_fwdbwd(json_data):
-    info("setting fwd and bwd cpu op names...")
-    cpu_df = json_data['cpu_op'].copy()
-    cpu_df = merge_df(
-        cpu_df,
-        json_data['fwdbwd'],
-        on='ts',
-        suffixes=('', '_fwdbwd'),
-        combine=()
-    )
-
-    has_seq_mask = ~cpu_df['seq_num'].isna()
-    fwd_mask = (cpu_df['bwd'] == False)
-    missing_mask = has_seq_mask & (~fwd_mask)
-
-    seq_with_name = cpu_df.loc[
-        has_seq_mask & fwd_mask, [
-            'seq_num', 'operator-name', 'layer', 'id']
-    ].drop_duplicates()
-
-    missing_df = cpu_df[missing_mask].copy()
-    missing_df['orig_index'] = missing_df.index
-
-    missing_df = missing_df.merge(
-        seq_with_name,
-        on='seq_num',
-        how='left',
-        suffixes=('', '_child'),
-    )
-    missing_df['operator-name_child'] = ('b_' +
-                                         missing_df['operator-name_child'])
-    cpu_df.loc[~missing_mask,
-               'operator-name'] = ('f_' + cpu_df.loc[~missing_mask, 'operator-name'])
-    cpu_df.loc[
-        missing_df['orig_index'],
-        ['operator-name', 'layer', 'id']
-    ] = missing_df[['operator-name_child', 'layer_child', 'id_child']].values
-    json_data['cpu_op'] = cpu_df
-
-
-def add_cpu(json_data):
-    cpu_merge = partial(
-        merge_df,
-        right=json_data['cpu_op'],
-        on='ext_id',
-        suffixes=('', '_cpu_op'),
-        combine=()
-    )
-
-    # memcpy_df = cpu_merge(json_data['gpu_memcpy'])
-    # memset_df = cpu_merge(json_data['gpu_memset'])
-    kernel_df = cpu_merge(json_data['kernel'])
-
-    return pd.concat((
-        # df for df in [memset_df, memcpy_df, kernel_df]
-        df for df in [kernel_df]
-    )).sort_values('ts').reset_index(drop=True)
-
-
-def parse_trace(trace_fn):
-    """Parse and process trace JSON file into structured DataFrame.
-    
-    Loads trace data, merges CUDA runtime information, assigns user annotations,
-    links forward/backward passes, and subordinates CPU operations to kernels.
-    
-    Args:
-        trace_fn: Path to trace JSON file from PyTorch profiler
-        
-    Returns:
-        Processed DataFrame with merged trace data
-    """
-    json_data = json_to_pandas(trace_fn)
-
-    add_cuda_runtime(json_data)
-    assign_annotation(json_data)
-    add_fwdbwd(json_data)
-    subordinate_cpu(json_data)
-    return add_cpu(json_data)
-
-
-def kern_name_short(name, start=0, length=80):
-    return f"{name[start:length]}{'...' if len(name) > length else ''}"
-
-
-def get_pivoted(rocprof_csv_filename):
-    rocprof_df = pd.read_csv(rocprof_csv_filename)
-
-    unique_counters = list(
-        c for c in rocprof_df.columns.to_list() if
-        c != "Counter_Name" and c != "Counter_Value"
-    )
-
-    pivoted_df = rocprof_df.pivot_table(
-        index=unique_counters,
-        columns="Counter_Name",
-        values="Counter_Value",
-    ).sort_values("Start_Timestamp", ascending=True).reset_index()
-    return pivoted_df
-
-
-def get_combined_counters(
-    counter_filenames,
-):
-    kname = 'Kernel_Name'
-    df_combined = None
-    info("Getting raw counter data...")
-    for cur_csv in counter_filenames:
-        df_cur = get_pivoted(cur_csv)
-
-        df_cur["_mi"] = df_cur.groupby(kname).cumcount()
-        if df_combined is None:
-            df_combined = df_cur
-        else:
-            df_combined = df_combined.merge(
-                df_cur,
-                on=[kname, "_mi"],
-                how="left",
-                suffixes=("", "_new")
-            )
-            df_combined = df_combined.loc[
-                :, ~df_combined.columns.str.endswith("_new")]
-
-    assert df_combined is not None
-    df_combined = df_combined.drop(columns=["_mi"])
-    return df_combined
-
-
-def get_merged(
-    counter_filenames,
-    df_ts,
-    iterations,
-) -> pd.DataFrame:
-    """Merge hardware performance counters with trace data.
-
-    Combines ROCm hardware counter CSV files with trace DataFrame,
-    matching kernels by name and GPU. Validates counter data consistency
-    and filters to specified iterations.
-
-    Args:
-        counter_filenames: List of paths to counter CSV files per GPU
-        df_ts: Trace DataFrame from parse_trace()
-        iterations: Optional list of iteration numbers to include
-
-    Returns:
-        Merged DataFrame with trace data and hardware counters
-    """
-
-    gpus = sorted(set(df_ts['gpu']))
-    n_gpus = len(gpus)
-
-    counter_filenames = tuple(
-        sorted(fns)
-        for fns in counter_filenames
-    )
-    # invert counters per GPU
-    counter_filenames = tuple(list(fns) for fns in zip(*counter_filenames))
-    n_counters = len(counter_filenames)
-
-    if n_gpus != n_counters:
-        warn(f"Number of counter files doesn't match {n_gpus} gpus:")
-        warn(
-            f"    Only the first {n_counters} counters will be used")
-
-    df_cntr = pd.concat(
-        [df.assign(gpu=i) for i, df in enumerate(
-            map(partial(get_combined_counters), counter_filenames))],
-        ignore_index=True
-    )
-    info("Loaded counter data")
-
-    kname = 'Kernel_Name'
-
-    # sanity check GPU against agent id
-    agent_id = 'Agent_Id'
-    aids = tuple(set(df_cntr[df_cntr['gpu'] == gpus[0]][agent_id]))
-    assert len(aids) == 1, f'More than one Agent ID was present: {aids}'
-    agent_id_inc = aids[0]
-    for gpu in gpus[1:n_counters]:
-        agent_id_inc += 1
-        aids = tuple(set(df_cntr[df_cntr['gpu'] == gpu][agent_id]))
-        assert len(aids) == 1, 'More than one Agent ID was present'
-        assert aids[0] == agent_id_inc, 'Agent ID was unexpected'
-
-    if iterations is not None:
-        ts_mask = (
-            (df_ts['gpu'] < n_counters) &
-            (df_ts['iteration'].isin(iterations))
-        )
-    else:
-        ts_mask = (
-            (df_ts['gpu'] < n_counters)
-        )
-
-    ts_names = df_ts.loc[ts_mask, "name"]
-    assert ts_names is not None
-
-    cntr_names = df_cntr.get(kname)
-    assert cntr_names is not None
-    ts_name_set = set(ts_names)
-    cntr_name_set = set(cntr_names)
-
-    cntr_diff = cntr_name_set - ts_name_set
-    ts_diff = ts_name_set - cntr_name_set
-
-    if len(cntr_diff):
-        warn("These kernel names are missing from Pytorch Profiler data:")
-        for d in cntr_diff:
-            warn(f"    {kern_name_short(d)}")
-
-    if len(ts_diff):
-        warn("These kernel names are missing from Counter data:")
-        for d in ts_diff:
-            warn(f"    {kern_name_short(d)}")
-
-    ts_names = df_ts.loc[ts_mask, "name"]
-    ts_name_set = set(ts_names)
-
-    ignore_kernels: list[str] = []
-    ignore_kernels.extend(cntr_diff)
-    ts_names = df_ts["name"]
-
-    remove_ts_mask = ts_names.isin(ignore_kernels)
-    remove_cntr_mask = cntr_names.isin(ignore_kernels)
-
-    df_ts.drop(df_ts[remove_ts_mask].index, inplace=True)
-    df_cntr.drop(df_cntr[remove_cntr_mask].index, inplace=True)
-
-    left_group_arrs = ['name', 'gpu']
-    right_group_arrs = [kname, 'gpu']
-
-    df_ts["_mi"] = (
-        df_ts
-        .iloc[::-1]
-        .groupby(left_group_arrs)
-        .cumcount()
-        .iloc[::-1]
-    )
-    df_cntr["_mi"] = (
-        df_cntr
-        .iloc[::-1]
-        .groupby(right_group_arrs)
-        .cumcount()
-        .iloc[::-1]
-    )
-
-    info("Merging timestamps and counters...")
-
-    if iterations is not None:
-        info("Selecting iterations:")
-        info(f"  {iterations}")
-        info("from iterations:")
-        unique_iters = set(df_ts['iteration'].unique())
-        info(f"  {unique_iters}")
-
-        if any(it not in unique_iters for it in iterations):
-            err("Invalid iterations selected")
-            exit(-1)
-
-        mask = df_ts["iteration"].isin(iterations)
-        df_ts_merge = df_ts[mask]
-        df_ts_rest = df_ts[~mask]
-    else:
-        df_ts_merge = df_ts
-
-    left_group_arrs += ["_mi"]
-    right_group_arrs += ["_mi"]
-    df_merged = df_ts_merge.merge(
-        df_cntr,
-        left_on=left_group_arrs,
-        right_on=right_group_arrs,
-        how="left",
-        suffixes=('', '_y'),
-    )
-
-    df_merged.drop(columns=['_mi', kname], inplace=True)
-    if iterations is not None:
-        df_ts_rest.drop(columns=['_mi'], inplace=True)
-        df_merged = pd.concat([df_merged, df_ts_rest], ignore_index=True)
-    df_merged = df_merged.sort_values("ts")
-
-    assert 'gpu_y' not in df_merged.columns
-
-    return df_merged
-
-
-def main(
-        pytorch_trace,
-        duration_pickle_fns,
-        counters,
-        iterations,
-        output_filename,
-):
-    # TODO double check what this does
-    pd.set_option('future.no_silent_downcasting', True)
-
-    if pytorch_trace is None and duration_pickle_fns is None and counters is None:
-        err("Nothing was passed to the script, what are you doing? :|")
-        return -1
-    if pytorch_trace is None and duration_pickle_fns is None:
-        err("Please pass either raw pytorch traces or a duration pickle to merge with counters")
-        return -1
-    if pytorch_trace is not None and duration_pickle_fns is not None:
-        err("Please only pass raw pytorch traces or a duration pickle not both")
-        return -1
-
-    if pytorch_trace is not None:
-        with ProcessPoolExecutor(max_workers=8) as ex:
-            gpu_dfs = tuple(ex.map(parse_trace, pytorch_trace))
-        for i, gpu_df in enumerate(gpu_dfs):
-            gpu_df["gpu"] = i
-        duration_pickle = pd.concat(gpu_dfs)
-        if counters is None:
-            duration_pickle.to_pickle(output_filename)
-            return 0
-    elif len(duration_pickle_fns) == 1:
-        duration_pickle = pd.read_pickle(duration_pickle_fns[0])
-    else:
-        if not (pytorch_trace is None and counters is None):
-            err("Trying to merge duration pickles, but was passed trace file or counters")
-            return -1
-        info(f"merging pickles: {duration_pickle_fns}")
-        pickles = [pd.read_pickle(dpf) for dpf in duration_pickle_fns]
-        merged = pd.concat(pickles)
-        merged.to_pickle(output_filename)
-        return 0
-
-    if counters is not None:
-        merged = get_merged(counters, duration_pickle, iterations)
-        merged.to_pickle(output_filename)
-    else:
-        duration_pickle.to_pickle(output_filename)
-
-    return 0
-
-
-if __name__ == "__main__":
-    desc = (
-        "There are three ways to use this script. "
-        "To merge with hardware counters perform each step below in order "
-        "(skip step two if only merging one trace per GPU). "
-        "Otherwise, only step one and optionally step two are needed.\n"
-        "1) Pass just pytorch trace files to create a duration pickle\n"
-        "2) Pass multiple duration pickles to merge duration pickles\n"
-        "3) Pass a duration pickle with counters to create a counter pickle\n"
-    )
-    parser = ArgumentParser(
-        description=desc,
-    )
-    parser.add_argument(
-        "--pytorch-trace",
-        "-t",
-        type=str,
-        required=False,
-        nargs="+",
-        help="Filenames of pytorch trace json files"
-    )
-    parser.add_argument(
-        "--duration_pickle",
-        "-p",
-        type=str,
-        required=False,
-        nargs='+',
-        help="Pickle of pytorch traces without performance counters"
-    )
-    parser.add_argument(
-        "--counters",
-        "-c",
-        action="append",
-        required=False,
-        nargs="+",
-        type=str,
-        help="List of counters csv files, pass additional lists to merge counter files together"
-    )
-    parser.add_argument(
-        "--iterations",
-        "-i",
-        type=int,
-        required=False,
-        nargs='+',
-        help="Pass to select iteration(s) to assign to timestamps (since counters may collect fewer iterations)"
-    )
-    parser.add_argument(
-        "-o",
-        "--output-filename",
-        type=str,
-        required=True,
-        help="Output pkl name",
-    )
+        with ProcessPoolExecutor(max_workers=len(traces)) as ex:
+            dfs = list(ex.map(parse_trace, traces))
+        for i, d in enumerate(dfs):
+            d['gpu'] = i
+        df = pd.concat(dfs, ignore_index=True)
+
+    df = df.sort_values('ts').reset_index(drop=True)
+    df.to_pickle(output)
+    t1 = time.time()
+
+    print(f"Wrote {len(df)} kernels to {output} in {t1-t0:.2f}s")
+    print(f"Columns: {list(df.columns)}")
+
+
+if __name__ == '__main__':
+    from argparse import ArgumentParser
+    parser = ArgumentParser()
+    parser.add_argument('-t', '--traces', nargs='+')
+    parser.add_argument('-p', '--pickles', nargs='+')
+    parser.add_argument('-o', '--output', required=True)
     args = parser.parse_args()
-    exit(main(
-        sorted(args.pytorch_trace) if args.pytorch_trace else None,
-        args.duration_pickle,
-        args.counters,
-        args.iterations,
-        args.output_filename,
-    ))
+    main(sorted(args.traces) if args.traces else None,
+         sorted(args.pickles) if args.pickles else None,
+         args.output)

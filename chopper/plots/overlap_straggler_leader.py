@@ -12,7 +12,7 @@ from matplotlib.ticker import FuncFormatter
 
 from chopper.common.colors import okabe_ito
 from chopper.common.load import get_overlap_df
-from chopper.common.annotations import PaperMode, Framework
+from chopper.common.annotations import PaperMode
 
 
 def no_digits_formatter(x, _):
@@ -23,7 +23,6 @@ def no_digits_formatter(x, _):
 def get_data(
     ts_files: list[str] = ["./ts.pkl"],
     variants: list[str] = ["default"],
-    frameworks: list[Framework] = [Framework.FSDPv2],
     operators: list[str] = ["b_attn_fa", "f_attn_op", "b_mlp_up"],
     iter_idxs: range = range(-5, -2, 1),
 ):
@@ -35,7 +34,6 @@ def get_data(
     Args:
         ts_files: List of paths to ts.pkl trace files
         variants: List of variant names corresponding to each file
-        frameworks: List of Framework types for each variant
         operators: List of operator names to analyze
         iter_idxs: Range of iteration indices to select
 
@@ -47,10 +45,9 @@ def get_data(
     """
     overlap_data = {}
 
-    for ts_file, variant, framework in zip(ts_files, variants, frameworks):
+    for ts_file, variant in zip(ts_files, variants):
         data = get_overlap_df(
             ts_file,
-            framework=framework,
             iter_idxs=list(iter_idxs),
         )
 
@@ -232,7 +229,6 @@ def draw(
 def main(
     ts_files: list[str] = ["./ts.pkl"],
     variants: list[str] = ["default"],
-    frameworks: list[Framework] = [Framework.FSDPv2],
     operators: list[str] = ["b_attn_fa", "f_attn_op", "b_mlp_up"],
     iter_start: int = -5,
     iter_stop: int = -2,
@@ -243,7 +239,7 @@ def main(
 ):
     fig = Figure()
     iter_idxs = range(iter_start, iter_stop, iter_step)
-    input_data = get_data(ts_files, variants, frameworks, operators, iter_idxs)
+    input_data = get_data(ts_files, variants, operators, iter_idxs)
     draw(fig, input_data, straggler_gpu, tags, PaperMode())
     fig.savefig(filename, dpi=300)
 

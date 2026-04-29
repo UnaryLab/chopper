@@ -3,13 +3,12 @@ from time import monotonic_ns
 from time import sleep
 import psutil
 import pandas as pd
-# from multiprocessing.sharedctypes import Synchronized
+from multiprocessing.sharedctypes import Synchronized
 from typing import Any
 
 
 def main(
-    # stop: Synchronized[bool],
-    stop,
+    stop: Synchronized,
     filename: str = 'cpu.pkl',
     outdir: str = '.',
     on: float = 0.0,

@@ -14,30 +14,24 @@ from matplotlib.ticker import MaxNLocator
 
 from chopper.common.colors import okabe_ito
 from chopper.common.load import get_df
-from chopper.common.annotations import Framework, PaperMode
+from chopper.common.annotations import PaperMode
 
 
 def get_data(
     ts_files: list[str] = ["./ts.pkl"],
-    variants: list[str] = ["default"],
-    frameworks: list[Framework] = [Framework.FSDPv2],
+    configs: list[str] = ["b1s4"],
 ):
     """Load and pre-aggregate trace data for end-to-end visualization.
 
-    Loads each trace, removes communication-overlapped kernels, and aggregates
-    by (gpu, chunk, iteration, layer, operator-type, operator-name, name) with
-    summed durations and first/last timestamps.
-
     Args:
         ts_files: List of paths to ts.pkl trace files
-        variants: Variant labels formatted as "<framework>-<config>" (e.g. "FSDPv1-b1s4")
-        frameworks: Framework type for each ts_file
+        configs: Config labels (e.g. "b1s4", "b2s8")
 
     Returns:
-        Dict mapping variant name to aggregated DataFrame
+        Dict mapping config name to aggregated DataFrame
     """
     dfs = {}
-    for ts_file, variant, framework in zip(ts_files, variants, frameworks):
+    for ts_file, config in zip(ts_files, configs):
         df = get_df(
             ts_file,
             iter_idxs=None,
@@ -55,16 +49,15 @@ def get_data(
                 "ts": ["first", "last"],
             },
             sort_value="ts_first",
-            framework=framework,
         )
-        dfs[variant] = df
+        dfs[config] = df
     return dfs
 
 
 def draw(
     fig: Figure,
     input_data,
-    norm_setup: str = "FSDPv1-b1s4",
+    norm_setup: str | None = None,
     paper_mode: PaperMode = PaperMode(),
 ):
     """Draw a 2x2 grid: throughput, iteration duration, fwd/bwd breakdown.
@@ -76,6 +69,8 @@ def draw(
         paper_mode: PaperMode settings for publication-quality figures
     """
     dfs = input_data
+    if norm_setup is None:
+        norm_setup = next(iter(dfs.keys()))
     assert norm_setup in dfs.keys(), f"norm_setup '{norm_setup}' not in data"
 
     fig.clear()
@@ -97,11 +92,7 @@ def draw(
         for r in range(n_rows)
     )
 
-    params = sorted(
-        set(s.split("-")[1] for s in dfs.keys()),
-        key=lambda x: re.findall(r"\d+", x)[::-1],
-    )
-    variants = sorted(set(s.split("-")[0] for s in dfs.keys()))
+    params = list(dfs.keys())
 
     chunks = None
     for df in dfs.values():
@@ -128,8 +119,6 @@ def draw(
     bars = ("launch overhead", "throughput") + chunks + optypes
     colors = tuple(okabe_ito.values())
     bar_color = {bar: colors[i] for i, bar in enumerate(bars)}
-    hatches = (None, r"\\\\\\\\")
-    bar_hatch = {m: hatches[i] for i, m in enumerate(variants)}
 
     tok_p_sec = {}
     chunk_time = {}
@@ -145,9 +134,8 @@ def draw(
         df.loc[df.groupby(["gpu", "iteration"]).head(1).index, "launch_overhead"] = 0
         dfs[setup] = df
 
-        param = setup.split("-")[1]
-        batch_size = int(re.findall(r"b(\d+)", param)[0])
-        seq_len = int(re.findall(r"s(\d+)", param)[0]) << 10
+        batch_size = int(re.findall(r"b(\d+)", setup)[0])
+        seq_len = int(re.findall(r"s(\d+)", setup)[0]) << 10
         tokens = batch_size * seq_len
 
         iter_time = (
@@ -195,14 +183,8 @@ def draw(
             ax = axs[row_idx][col_idx]
             ax.yaxis.set_major_locator(MaxNLocator(nbins=(4 if row_idx == 0 else 5)))
             for setup, df in dfs.items():
-                variant = setup.split("-")[0]
-                param = setup.split("-")[1]
-                tick = params.index(param)
-                bar_width = 0.9 / len(variants)
-                offset = (
-                    -bar_width / 2 * (len(variants) - 1)
-                    + bar_width * variants.index(variant)
-                )
+                tick = params.index(setup)
+                bar_width = 0.9
                 ax.set_xticks(range(len(params)))
                 ax.set_xticklabels(params)
                 ax.set_xlim(-0.5, len(params) - 1 + 0.5)
@@ -212,14 +194,13 @@ def draw(
                     ax.set_title("throughput", pad=2, fontsize=8)
                     value = tok_p_sec[setup] / tok_p_sec[norm_setup]
                     ax.bar(
-                        tick + offset,
+                        tick,
                         value,
                         width=bar_width * 0.9,
                         bottom=0,
                         color=bar_color["throughput"],
                         alpha=0.999,
                         linewidth=0,
-                        hatch=bar_hatch[variant],
                     )
                     ax.set_ylabel("norm", labelpad=1)
                     ax.grid(axis="y", linestyle="--", alpha=0.5)
@@ -234,19 +215,17 @@ def draw(
                     for chunk in chunks:
                         value = chunk_time[setup][chunk] / chunk_time_norm
                         ax.bar(
-                            tick + offset, value,
+                            tick, value,
                             width=bar_width * 0.9, bottom=bottom,
                             color=bar_color[chunk], linewidth=0, alpha=0.999,
-                            hatch=bar_hatch[variant],
-                        )
+                            )
                         bottom += value
                         value = bubble_time[setup][chunk] / chunk_time_norm
                         ax.bar(
-                            tick + offset, value,
+                            tick, value,
                             width=bar_width * 0.9, bottom=bottom,
                             color=bar_color["launch overhead"],
-                            linewidth=0, alpha=0.999, hatch=bar_hatch[variant],
-                        )
+                            linewidth=0, alpha=0.999,                        )
                         bottom += value
                     ax.grid(axis="y", linestyle="--", alpha=0.5)
                     ax.spines["top"].set_visible(False)
@@ -284,19 +263,17 @@ def draw(
                     for optype in optypes:
                         bar_value = ot_vals[optype] / stretch * 100
                         ax.bar(
-                            tick + offset, bar_value,
+                            tick, bar_value,
                             width=bar_width * 0.9, bottom=bottom,
                             color=bar_color[optype], linewidth=0, alpha=0.999,
-                            hatch=bar_hatch[variant],
-                        )
+                            )
                         bottom += bar_value
                         bar_value = ot_bubbles[optype] / stretch * 100
                         ax.bar(
-                            tick + offset, bar_value,
+                            tick, bar_value,
                             width=bar_width * 0.9, bottom=bottom,
                             color=bar_color["launch overhead"],
-                            linewidth=0, alpha=0.999, hatch=bar_hatch[variant],
-                        )
+                            linewidth=0, alpha=0.999,                        )
                         bottom += bar_value
                     ax.grid(axis="y", linestyle="--", alpha=0.5)
                     ax.tick_params(axis="x", pad=1)
@@ -319,19 +296,11 @@ def draw(
     axs[1][1].set_ylim(y_lim)
 
     bar_handles = [mpatches.Patch(color=bar_color[bar], label=bar.lower()) for bar in bars]
-    bar_handles.extend(
-        [
-            mpatches.Patch(
-                facecolor="white", edgecolor="black", label=m, hatch=bar_hatch[m]
-            )
-            for m in variants
-        ]
-    )
 
     legend_kwargs = dict(
         handles=bar_handles,
         loc="upper center",
-        ncol=(len(bars) + 2) // 2,
+        ncol=len(bars),
         labelspacing=0.2,
         handletextpad=0.4,
         columnspacing=1.4,
@@ -354,14 +323,14 @@ def draw(
 
 def main(
     ts_files: list[str] = ["./ts.pkl"],
-    variants: list[str] = ["default"],
-    frameworks: list[Framework] = [Framework.FSDPv2],
-    norm_setup: str = "FSDPv1-b1s4",
+    configs: list[str] = ["b1s4"],
+    norm_setup: str | None = None,
     paper_mode: PaperMode = PaperMode(),
-    filename: str = "end_to_end.png",
+    figsize: tuple[float, float] = (7.16, 3.5),
+    filename: str = "end_to_end.pdf",
 ):
-    fig = Figure()
-    input_data = get_data(ts_files, variants, frameworks)
+    fig = Figure(figsize=figsize)
+    input_data = get_data(ts_files, configs)
     draw(fig, input_data, norm_setup, paper_mode)
     fig.savefig(filename, dpi=300)
 

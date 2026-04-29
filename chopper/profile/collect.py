@@ -1,11 +1,5 @@
-"""Main entry point for collecting profiling data.
-
-Orchestrates collection of hardware counters, CPU telemetry, and GPU telemetry
-during distributed training runs. Uses the Runner class to manage concurrent
-data collection threads.
-"""
 from argparse import ArgumentParser
-from chopper.profile.telemetry import cpu, gpu, counters
+from chopper.profile.telemetry import cpu, gpu, counters, device_counters
 from chopper.profile.runner import Runner
 
 
@@ -15,24 +9,11 @@ def main(program,
          container,
          nvidia,
          cpu_telemetry,
-         gpu_telemetry):
-    """Collect profiling data during program execution.
-    
-    Starts telemetry collection threads and runs the target program
-    with performance counter instrumentation.
-    
-    Args:
-        program: Command and arguments to execute
-        counter_names: List of hardware counter names to collect
-        outdir: Output directory for collected data
-        container: Container runtime to use (docker/singularity)
-        nvidia: If True, collect NVIDIA GPU telemetry
-        cpu_telemetry: If True, collect CPU metrics
-        gpu_telemetry: If True, collect GPU metrics
-        
-    Returns:
-        Exit code (0 for success, -1 for errors)
-    """
+         gpu_telemetry,
+         device,
+         telemetry_on=0.0,
+         telemetry_off=0.1,
+         sample_ms=1):
     if len(program) == 0:
         print("Please pass a program to run")
         return -1
@@ -44,6 +25,8 @@ def main(program,
             cpu.main,
             False,
             outdir=outdir,
+            on=telemetry_on,
+            off=telemetry_off,
         )
     if gpu_telemetry:
         runner.add(
@@ -51,16 +34,31 @@ def main(program,
             False,
             nvidia=nvidia,
             outdir=outdir,
+            on=telemetry_on,
+            off=telemetry_off,
         )
-    runner.add(
-        counters.main,
-        True,
-        program,
-        counter_names,
-        outdir,
-        container,
-        nvidia,
-    )
+
+    if device:
+        runner.add(
+            device_counters.main,
+            True,
+            program,
+            counter_names,
+            outdir,
+            container,
+            nvidia,
+            sample_ms,
+        )
+    else:
+        runner.add(
+            counters.main,
+            True,
+            program,
+            counter_names,
+            outdir,
+            container,
+            nvidia,
+        )
     runner.start()
     runner.join()
 
@@ -105,6 +103,30 @@ if __name__ == "__main__":
         help="Container image to use"
     )
     parser.add_argument(
+        '--device',
+        action='store_true',
+        required=False,
+        help='Use device-level counter sampling (no kernel serialization) instead of rocprofv3 dispatch profiling'
+    )
+    parser.add_argument(
+        '--sample-ms',
+        type=int,
+        default=1,
+        help='Device counter sampling interval in ms (default: 1, only used with --device)'
+    )
+    parser.add_argument(
+        '--telemetry-on',
+        type=float,
+        default=0.0,
+        help='duration (seconds) to sample continuously before pausing (default: 0.0)',
+    )
+    parser.add_argument(
+        '--telemetry-off',
+        type=float,
+        default=0.1,
+        help='sleep duration (seconds) between samples (default: 0.1 = 10 Hz)',
+    )
+    parser.add_argument(
         'program',
         nargs='*',
         help='program to run',
@@ -118,4 +140,8 @@ if __name__ == "__main__":
         args.nvidia,
         args.cpu_telemetry,
         args.gpu_telemetry,
+        args.device,
+        args.telemetry_on,
+        args.telemetry_off,
+        args.sample_ms,
     ))

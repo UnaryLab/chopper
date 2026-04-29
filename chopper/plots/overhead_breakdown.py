@@ -3,7 +3,7 @@
 For each operator, decomposes the actual median duration into a stack of
 contributions: theoretical compute time (peak FLOPs), instruction overhead
 (MFMA flops vs theoretical), utilization, communication overlap (CDF mid),
-and clock-frequency. Compares variants via hatch. (Paper Figure: overhead_breakdown.pdf)
+and clock-frequency. (Paper Figure: overhead_breakdown.pdf)
 """
 
 import re
@@ -15,7 +15,7 @@ from matplotlib.ticker import MaxNLocator
 from chopper.common.colors import rgb
 from chopper.common.cache import load_pickle
 from chopper.common.annotations import (
-    Framework, PaperMode,
+    PaperMode,
     no_overlap_mask, assign_chunks, assign_operator_type, fix_names,
 )
 from chopper.common.rocm_metrics import (
@@ -67,27 +67,25 @@ def _calc_thr_flops(bs: int, cl: int) -> dict:
 
 def get_data(
     counter_files: list[str] = ["./counters.pkl"],
-    variants: list[str] = ["default"],
-    frameworks: list[Framework] = [Framework.FSDPv2],
+    configs: list[str] = ["default"],
     target_gpu: int = 0,
 ):
     """Load counters and pre-aggregate per-operator metrics for one GPU.
 
-    For each variant, filters to non-overlapping compute kernels of the target
+    For each config, filters to non-overlapping compute kernels of the target
     GPU, aggregates by (chunk, iteration, operator-name, layer), derives Tensor
     Flops / Tensor Util / Cycle Duration via rocm_metrics, and additionally
     computes the per-operator overlap CDF against communication kernels.
 
     Args:
         counter_files: List of paths to counters.pkl files
-        variants: Variant labels formatted as "<framework>-<config>"
-        frameworks: Framework type per counter file
+        configs: Config labels (e.g. "b1s4", "b2s8")
         target_gpu: Single GPU index to extract (matches paper figure)
 
     Returns:
-        Dict mapping variant -> {"data": agg DataFrame, "cdf": {op -> overlap CDF DataFrame}}
+        Dict mapping config -> {"data": agg DataFrame, "cdf": {op -> overlap CDF DataFrame}}
     """
-    raw = {v: load_pickle(fn) for v, fn in zip(variants, counter_files)}
+    raw = {config: load_pickle(fn) for config, fn in zip(configs, counter_files)}
     breakdown_data = {}
 
     derive_cols = (
@@ -116,10 +114,10 @@ def get_data(
 
     dummy_flops = _calc_thr_flops(1, 4)
 
-    for variant, framework in zip(variants, frameworks):
-        df = raw[variant]
+    for config in configs:
+        df = raw[config]
         gpu_mask = df["gpu"] == target_gpu
-        overlap_mask = no_overlap_mask(df, framework=framework)
+        overlap_mask = no_overlap_mask(df)
 
         df = assign_chunks(df)
         df = assign_operator_type(df)
@@ -136,7 +134,7 @@ def get_data(
         )
 
         cdf_input_kernels = df[~nan_chunk_mask & gpu_mask & ~overlap_mask]
-        breakdown_data[variant] = {
+        breakdown_data[config] = {
             "data": agg_data,
             "cdf": {
                 op: compute_overlap_cdf(
@@ -167,11 +165,11 @@ def draw(
     sanity_check: bool = False,
     paper_mode: PaperMode = PaperMode(),
 ):
-    """Draw stacked-source breakdown bars per operator and per variant.
+    """Draw stacked-source breakdown bars per operator and per config.
 
     Args:
         fig: Matplotlib Figure object to draw on
-        input_data: Dict from get_data() of variant -> {data, cdf}
+        input_data: Dict from get_data() of config -> {data, cdf}
         setup_axis_map: Maps mod-param suffix (e.g. "b1s4") to (column_index, xlim_index)
         xlims: Per-row list of x-axis upper limits indexed by xlim_index
         sanity_check: If True, also draw an "Actual Duration" bar per op
@@ -203,7 +201,6 @@ def draw(
         bar_color["Actual Duration"] = rgb(0x99, 0x99, 0x99)
 
     stack_data = {}
-    vendors = set()
     max_dur = 0
     for s in setups:
         for op in ops:
@@ -215,12 +212,8 @@ def draw(
             max_dur = max(max_dur, op_data["Duration"].median())
 
     for s in setups:
-        v, mod_param = s.split("-", 1)
-        vendors.add(v)
         for op in ops:
-            mod_slot = stack_data.setdefault(mod_param, {})
-            v_slot = mod_slot.setdefault(v, {})
-            op_slot = v_slot.setdefault(op, {})
+            op_slot = stack_data.setdefault(s, {}).setdefault(op, {})
 
             op_data = (
                 data[s]["data"]
@@ -232,8 +225,8 @@ def draw(
             act_duration = op_data["Duration"].median()
             op_slot["Actual Duration"] = act_duration / max_dur
 
-            batch_size = int(re.findall(r"b(\d+)", mod_param)[0])
-            seq_len = int(re.findall(r"s(\d+)", mod_param)[0]) << 10
+            batch_size = int(re.findall(r"b(\d+)", s)[0])
+            seq_len = int(re.findall(r"s(\d+)", s)[0]) << 10
 
             thr_flops = _calc_thr_flops(batch_size, seq_len)
             op_thr_flops = thr_flops[op]
@@ -264,10 +257,6 @@ def draw(
             first = elapsed.iloc[0]["median"]
             op_slot["overlap"] = max(mid / first, 1) if ovr != 0 else 1
 
-    vendors = sorted(vendors)
-    hatches = (None, r"\\\\\\\\")
-    hatch_map = {v: hatches[i] for i, v in enumerate(vendors)}
-
     fig.clear()
     fig.patches.clear()
     if paper_mode.enabled:
@@ -287,8 +276,8 @@ def draw(
     n_ops = len(ops)
     ops_per_row = n_ops // n_rows
 
-    for mod_param in stack_data.keys():
-        i, xlim_idx = setup_axis_map[mod_param]
+    for config in stack_data.keys():
+        i, xlim_idx = setup_axis_map[config]
         for l in range(n_rows):
             op_sidx = l * ops_per_row
             op_eidx = (l + 1) * ops_per_row + ((n_ops % n_rows) if l == n_rows - 1 else 0)
@@ -309,94 +298,89 @@ def draw(
                 ax.set_yticklabels([])
             if l != 0:
                 ax.text(
-                    0.50, -0.4, mod_param,
+                    0.50, -0.4, config,
                     transform=ax.transAxes,
                     ha="center", va="bottom",
                     fontsize=8, fontweight="bold",
                 )
-            for j, v in enumerate(stack_data[mod_param].keys()):
-                n_vendors = len(stack_data[mod_param].keys())
+            if sanity_check:
+                bar_width = 0.8 / 2
+            else:
+                bar_width = 0.8
+
+            for k, (op, op_data) in enumerate(
+                tuple(stack_data[config].items())[op_sidx:op_eidx]
+            ):
+                bar_base = 0
+                acc = 0
+
                 if sanity_check:
-                    bar_width = 0.8 / 2 / n_vendors
-                    offset = -bar_width / 2 * (2 * n_vendors - 1) + bar_width * n_vendors * j
-                else:
-                    bar_width = 0.8 / n_vendors
-                    offset = -bar_width / 2 * (n_vendors - 1) + bar_width / 2 * n_vendors * j
-
-                for k, (op, op_data) in enumerate(
-                    tuple(stack_data[mod_param][v].items())[op_sidx:op_eidx]
-                ):
-                    bar_base = 0
-                    acc = 0
-
-                    if sanity_check:
-                        ax.barh(
-                            y[k] + offset + bar_width,
-                            op_data["Actual Duration"],
-                            left=bar_base,
-                            label="Actual Duration",
-                            color=bar_color["Actual Duration"],
-                            height=bar_width * 0.9,
-                            hatch=hatch_map[v],
-                            alpha=0.99,
-                        )
-
-                    thr_duration = op_data["theoretical duration"]
                     ax.barh(
-                        y[k] + offset, thr_duration,
-                        left=bar_base, label="theoretical duration",
-                        color=bar_color["theoretical duration"],
-                        height=bar_width * 0.9,
-                        hatch=hatch_map[v], alpha=0.99,
-                    )
-                    acc = thr_duration
-                    bar_base = acc
-
-                    flop_ovr = op_data["inst"]
-                    flop_time = flop_ovr * acc
-                    ax.barh(
-                        y[k] + offset, flop_time - acc,
+                        y[k] + bar_width,
+                        op_data["Actual Duration"],
                         left=bar_base,
-                        color=bar_color["instruction"],
+                        label="Actual Duration",
+                        color=bar_color["Actual Duration"],
                         height=bar_width * 0.9,
-                        hatch=hatch_map[v], alpha=0.99,
+                        alpha=0.99,
                     )
-                    acc = flop_time
-                    bar_base = acc
 
-                    compute_ovr = op_data["util"]
-                    compute_time = compute_ovr * acc
-                    ax.barh(
-                        y[k] + offset, compute_time - acc,
-                        left=bar_base,
-                        color=bar_color["utilization"],
-                        height=bar_width * 0.9,
-                        hatch=hatch_map[v], alpha=0.99,
-                    )
-                    acc = compute_time
-                    bar_base = acc
+                thr_duration = op_data["theoretical duration"]
+                ax.barh(
+                    y[k], thr_duration,
+                    left=bar_base, label="theoretical duration",
+                    color=bar_color["theoretical duration"],
+                    height=bar_width * 0.9,
+                    alpha=0.99,
+                )
+                acc = thr_duration
+                bar_base = acc
 
-                    overlap_ovr = op_data["overlap"]
-                    overlap_time = overlap_ovr * bar_base
-                    ax.barh(
-                        y[k] + offset, overlap_time - bar_base,
-                        left=bar_base,
-                        color=bar_color["overlap"],
-                        height=bar_width * 0.9,
-                        hatch=hatch_map[v], alpha=0.99,
-                    )
-                    acc = overlap_time
-                    bar_base = acc
+                flop_ovr = op_data["inst"]
+                flop_time = flop_ovr * acc
+                ax.barh(
+                    y[k], flop_time - acc,
+                    left=bar_base,
+                    color=bar_color["instruction"],
+                    height=bar_width * 0.9,
+                    alpha=0.99,
+                )
+                acc = flop_time
+                bar_base = acc
 
-                    clock_ovr = op_data["freq"] / overlap_ovr
-                    clock_time = clock_ovr * bar_base
-                    ax.barh(
-                        y[k] + offset, clock_time - bar_base,
-                        left=bar_base,
-                        color=bar_color["frequency"],
-                        height=bar_width * 0.9,
-                        hatch=hatch_map[v], alpha=0.99,
-                    )
+                compute_ovr = op_data["util"]
+                compute_time = compute_ovr * acc
+                ax.barh(
+                    y[k], compute_time - acc,
+                    left=bar_base,
+                    color=bar_color["utilization"],
+                    height=bar_width * 0.9,
+                    alpha=0.99,
+                )
+                acc = compute_time
+                bar_base = acc
+
+                overlap_ovr = op_data["overlap"]
+                overlap_time = overlap_ovr * bar_base
+                ax.barh(
+                    y[k], overlap_time - bar_base,
+                    left=bar_base,
+                    color=bar_color["overlap"],
+                    height=bar_width * 0.9,
+                    alpha=0.99,
+                )
+                acc = overlap_time
+                bar_base = acc
+
+                clock_ovr = op_data["freq"] / overlap_ovr
+                clock_time = clock_ovr * bar_base
+                ax.barh(
+                    y[k], clock_time - bar_base,
+                    left=bar_base,
+                    color=bar_color["frequency"],
+                    height=bar_width * 0.9,
+                    alpha=0.99,
+                )
 
             ax.tick_params(axis="x", rotation=0, pad=1)
             ax.tick_params(axis="y", pad=1)
@@ -416,21 +400,6 @@ def draw(
         legend_kwargs["bbox_to_anchor"] = paper_mode.legend_bbox
     fig.legend(**legend_kwargs)
 
-    hatch_handles = tuple(
-        mpatches.Patch(facecolor="white", edgecolor="black", hatch=hatch_map[v], label=v)
-        for v in vendors
-    )
-    fig.legend(
-        handles=hatch_handles,
-        loc="upper right",
-        ncol=2,
-        borderpad=0.17,
-        handletextpad=0.4,
-        columnspacing=0.6,
-        handlelength=0.5,
-        frameon=False,
-    )
-
     if paper_mode.enabled:
         fig.patches.append(
             mpatches.Rectangle(
@@ -443,15 +412,14 @@ def draw(
 
 def main(
     counter_files: list[str] = ["./counters.pkl"],
-    variants: list[str] = ["default"],
-    frameworks: list[Framework] = [Framework.FSDPv2],
+    configs: list[str] = ["default"],
     target_gpu: int = 0,
     sanity_check: bool = False,
     paper_mode: PaperMode = PaperMode(),
     filename: str = "overhead_breakdown.png",
 ):
     fig = Figure()
-    input_data = get_data(counter_files, variants, frameworks, target_gpu)
+    input_data = get_data(counter_files, configs, target_gpu)
     draw(fig, input_data, sanity_check=sanity_check, paper_mode=paper_mode)
     fig.savefig(filename, dpi=300)
 

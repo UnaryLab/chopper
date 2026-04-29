@@ -35,10 +35,9 @@ from matplotlib.figure import Figure
 
 import chopper.plots
 
-from chopper.common.annotations import Framework, PaperMode
+from chopper.common.annotations import PaperMode
 from chopper.selectors import (
     PlotSelection,
-    FrameworkSelection,
     BoolSelection,
     StrSelection,
     IntSelection,
@@ -316,7 +315,6 @@ class MatplotlibWidget(QWidget):
             inspect.formatannotation(list[int]): IntlistSelection,
             inspect.formatannotation(list[float]): FloatlistSelection,
             inspect.formatannotation(bool): BoolSelection,
-            inspect.formatannotation(list[Framework]): FrameworkSelection,
             inspect.formatannotation(str): StrSelection,
             inspect.formatannotation(int): IntSelection,
             inspect.formatannotation(float): FloatSelection,
