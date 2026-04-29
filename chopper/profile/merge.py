@@ -231,11 +231,146 @@ def parse_trace(filename):
     return build_kernel_df(cpu_ops, kernels, runtime, labeled, layer_ranges, iter_ranges, fwdbwd_layers)
 
 
-def main(traces, pickles, output):
+def get_pivoted(csv_filename):
+    """Pivot rocprofv3 CSV from long format to wide format.
+
+    rocprofv3 --pmc outputs one row per (kernel, counter). This pivots so
+    each kernel dispatch is one row with counter names as columns.
+    """
+    df = pd.read_csv(csv_filename)
+    meta_cols = [c for c in df.columns if c not in ("Counter_Name", "Counter_Value")]
+    pivoted = df.pivot_table(
+        index=meta_cols, columns="Counter_Name", values="Counter_Value",
+    ).sort_values("Start_Timestamp", ascending=True).reset_index()
+    return pivoted
+
+
+def get_combined_counters(csv_list):
+    """Merge multiple counter CSV batches for one GPU.
+
+    Each batch collected different counters from the same workload re-run.
+    Joins on [Kernel_Name, _mi] where _mi is the instance index within
+    each kernel name.
+    """
+    kname = "Kernel_Name"
+    df_combined = None
+    for cur_csv in csv_list:
+        df_cur = get_pivoted(cur_csv)
+        df_cur["_mi"] = df_cur.groupby(kname).cumcount()
+        if df_combined is None:
+            df_combined = df_cur
+        else:
+            df_combined = df_combined.merge(
+                df_cur, on=[kname, "_mi"], how="left", suffixes=("", "_new"),
+            )
+            df_combined = df_combined.loc[
+                :, ~df_combined.columns.str.endswith("_new")]
+    assert df_combined is not None, "no counter CSV files provided"
+    df_combined = df_combined.drop(columns=["_mi"])
+    return df_combined
+
+
+def merge_counters(df_ts, counter_batches):
+    """Join hardware counter data with trace pickle.
+
+    Args:
+        df_ts: Trace DataFrame (from ts.pkl)
+        counter_batches: List of lists -- each inner list is one batch of
+            CSV files (sorted = GPU order). E.g.:
+            [["batch0/gpu0.csv", "batch0/gpu1.csv"],
+             ["batch1/gpu0.csv", "batch1/gpu1.csv"]]
+    """
+    # Transpose from per-batch to per-GPU
+    per_gpu = [list(fns) for fns in zip(*[sorted(b) for b in counter_batches])]
+    n_counter_gpus = len(per_gpu)
+
+    gpus = sorted(df_ts["gpu"].unique())
+    if len(gpus) != n_counter_gpus:
+        print(f"WARNING: {len(gpus)} GPUs in trace but {n_counter_gpus} counter files")
+
+    # Load and combine counters per GPU
+    df_cntr = pd.concat(
+        [df.assign(gpu=i) for i, df in enumerate(
+            map(get_combined_counters, per_gpu))],
+        ignore_index=True,
+    )
+    print(f"Loaded {len(df_cntr)} counter rows across {n_counter_gpus} GPUs")
+
+    kname = "Kernel_Name"
+
+    # Select first iteration from trace for matching
+    first_iter = df_ts["iteration"].dropna().unique().min()
+    print(f"Matching counters against iteration {first_iter}")
+    match_mask = df_ts["iteration"] == first_iter
+    df_match = df_ts[match_mask].copy()
+    df_rest = df_ts[~match_mask].copy()
+
+    # Warn about kernel name mismatches
+    ts_names = set(df_match["name"])
+    cntr_names = set(df_cntr[kname])
+    cntr_only = cntr_names - ts_names
+    ts_only = ts_names - cntr_names
+    if cntr_only:
+        print(f"WARNING: {len(cntr_only)} kernels in counters but not trace")
+    if ts_only:
+        print(f"WARNING: {len(ts_only)} kernels in trace but not counters")
+
+    # Remove mismatched kernels from counter side
+    df_cntr = df_cntr[~df_cntr[kname].isin(cntr_only)]
+
+    # Assign reverse-cumcount _mi (count from end so late dispatches align)
+    left_keys = ["name", "gpu"]
+    right_keys = [kname, "gpu"]
+
+    df_match["_mi"] = (
+        df_match.iloc[::-1].groupby(left_keys).cumcount().iloc[::-1]
+    )
+    df_cntr["_mi"] = (
+        df_cntr.iloc[::-1].groupby(right_keys).cumcount().iloc[::-1]
+    )
+
+    # Merge
+    df_merged = df_match.merge(
+        df_cntr,
+        left_on=left_keys + ["_mi"],
+        right_on=right_keys + ["_mi"],
+        how="left",
+        suffixes=("", "_y"),
+    )
+
+    # Drop temp and duplicate columns
+    drop_cols = ["_mi", kname]
+    drop_cols += [c for c in df_merged.columns if c.endswith("_y")]
+    df_merged = df_merged.drop(columns=[c for c in drop_cols if c in df_merged.columns])
+
+    # Rejoin with non-matched iterations
+    df_result = pd.concat([df_merged, df_rest], ignore_index=True)
+    df_result = df_result.sort_values("ts").reset_index(drop=True)
+
+    # Report
+    counter_cols = [c for c in df_merged.columns if c not in df_ts.columns and c != "_mi"]
+    n_matched = df_merged[counter_cols[0]].notna().sum() if counter_cols else 0
+    print(f"Merged {n_matched}/{len(df_match)} kernels with counters")
+    print(f"Counter columns: {counter_cols}")
+
+    return df_result
+
+
+def main(traces, pickles, counters, output):
     assert not (traces and pickles), "pass either -t or -p, not both"
     assert traces or pickles, "pass -t (traces) or -p (pickles)"
+    assert not (traces and counters), "cannot use -c with -t; merge traces first, then add counters with -p"
 
     t0 = time.time()
+
+    if pickles and counters:
+        assert len(pickles) == 1, "pass exactly one pickle with -c"
+        df = pd.read_pickle(pickles[0])
+        df = merge_counters(df, counters)
+        df.to_pickle(output)
+        t1 = time.time()
+        print(f"Merged counters into {len(df)} kernels -> {output} in {t1-t0:.2f}s")
+        return
 
     if pickles:
         dfs = [pd.read_pickle(p) for p in pickles]
@@ -266,11 +401,20 @@ def main(traces, pickles, output):
 
 if __name__ == '__main__':
     from argparse import ArgumentParser
-    parser = ArgumentParser()
+    parser = ArgumentParser(description=(
+        "Merge PyTorch traces into a kernel pickle, combine pickles, "
+        "or join hardware counters with an existing pickle.\n"
+        "  1) -t trace*.json -o ts.pkl        (parse traces)\n"
+        "  2) -p iter*.pkl -o ts.pkl           (combine pickles)\n"
+        "  3) -p ts.pkl -c batch0/*.csv -o out.pkl  (add counters)\n"
+    ))
     parser.add_argument('-t', '--traces', nargs='+')
     parser.add_argument('-p', '--pickles', nargs='+')
+    parser.add_argument('-c', '--counters', action='append', nargs='+',
+                        help='Counter CSV files (one -c per batch, sorted = GPU order)')
     parser.add_argument('-o', '--output', required=True)
     args = parser.parse_args()
     main(sorted(args.traces) if args.traces else None,
          sorted(args.pickles) if args.pickles else None,
+         args.counters,
          args.output)

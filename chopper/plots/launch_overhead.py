@@ -16,7 +16,6 @@ from chopper.common.annotations import (
     fix_names,
 )
 from chopper.common.trace_metrics import (
-    derive_launch_overhead,
     derive_prep_overhead,
     derive_call_overhead,
 )
@@ -74,10 +73,9 @@ def get_data(
 ):
     """Load and process kernel launch overhead metrics.
 
-    Processes trace files to extract launch overhead, prep overhead, and call
-    overhead metrics for different training operators. Filters out communication
-    kernels and aggregates metrics by operator and layer, normalizing to the
-    maximum overhead value across configs.
+    Computes per-kernel launch overhead (gap between consecutive compute
+    kernels on the same GPU within the same iteration), then sums across
+    layers per operator. Normalizes to the maximum overhead across configs.
 
     Args:
         ts_files: List of paths to trace pickle files
@@ -86,55 +84,60 @@ def get_data(
     Returns:
         Dict mapping config names to processed DataFrames with normalized overhead metrics
     """
-    data = {
+    raw = {
         config: load_pickle(ts_file)
         for ts_file, config in zip(ts_files, configs)
     }
 
-    metrics = (
-        "Launch Overhead",
-        "Prep Overhead",
-        "Call Overhead",
-    )
-    max_ov_sub = 0
-    for setup in data.keys():
-        data[setup]["layer"] = data[setup]["layer"].fillna(-1)
-        weird_mask = data[setup]["iteration"].isna()
+    metrics = ("Prep Overhead", "Call Overhead")
+    data = {}
+    for setup, df in raw.items():
+        df["layer"] = df["layer"].fillna(-1)
+        weird_mask = df["iteration"].isna()
         if weird_mask.any():
-            weird_df = data[setup][weird_mask]
-            max_weird_ts = weird_df["ts"].max()
-            min_norm_ts = data[setup][~weird_mask]["ts"].min()
-            assert min_norm_ts > max_weird_ts, "Nan iteration isn't at the start"
-            data[setup] = data[setup][~weird_mask]
+            assert df[~weird_mask]["ts"].min() > df[weird_mask]["ts"].max(), (
+                "NaN iteration isn't at the start"
+            )
+            df = df[~weird_mask]
 
-        data[setup] = data[setup][data[setup]["name"] != "Memcpy HtoD (Host -> Device)"]
+        df = df[df["name"] != "Memcpy HtoD (Host -> Device)"]
 
-        data[setup] = assign_chunks(data[setup])
-        nan_chunk_mask = data[setup]["chunk"].isna()
+        # First kernel ts per (gpu, iteration) from ALL kernels (including comm)
+        iter_start = df.groupby(["gpu", "iteration"])["ts"].min()
 
-        data[setup] = fix_names(data[setup])
+        df = assign_chunks(df)
+        df = df[~df["chunk"].isna()]
+        df = fix_names(df)
+        overlap_mask = no_overlap_mask(df)
+        df = df[overlap_mask].copy()
 
-        overlap_mask = no_overlap_mask(data[setup])
+        # Per-kernel overhead grouped by (gpu, iteration)
+        df = derive_prep_overhead(df)
+        df = derive_call_overhead(df)
 
-        data[setup] = agg(
-            data[setup][overlap_mask & ~nan_chunk_mask],
-            ["gpu", "chunk", "iteration", "operator-name", "layer"],
-            derive_cols_before=(
-                derive_launch_overhead,
-                derive_prep_overhead,
-                derive_call_overhead,
-            ),
-            sum_cols_map={metric: ["sum"] for metric in metrics},
+        # For the first compute kernel per iteration, override with gap
+        # from the iteration's first kernel (including comm)
+        first_idx = df.groupby(["gpu", "iteration"]).head(1).index
+        for idx in first_idx:
+            row = df.loc[idx]
+            start_ts = iter_start.loc[(row["gpu"], row["iteration"])]
+            gap = max(0, row["ts"] - start_ts) * 1e-6
+            df.loc[idx, "Prep Overhead"] = gap
+            df.loc[idx, "Call Overhead"] = 0
+
+        # Sum across layers per (gpu, iteration, operator-name)
+        agg_df = (
+            df.groupby(["gpu", "iteration", "operator-name"])
+            .agg({m: "sum" for m in metrics})
+            .reset_index()
         )
-        gb_sub = data[setup][
-            ~data[setup]["operator-name"].isin(("f_ie", "b_ga", "opt_step"))
-        ].groupby("operator-name")
-        max_ov_sub = max(max_ov_sub, np.max(gb_sub["Launch Overhead"].mean()))
-
-    for setup in data.keys():
-        data[setup]["Call Overhead"] /= max_ov_sub
-        data[setup]["Prep Overhead"] /= max_ov_sub
-        data[setup]["Launch Overhead"] /= max_ov_sub
+        # Median across (gpu, iteration) per operator
+        op_df = (
+            agg_df.groupby("operator-name")
+            .agg({m: "median" for m in metrics})
+            .reset_index()
+        )
+        data[setup] = op_df
 
     return data
 
@@ -181,7 +184,24 @@ def draw(
         "Call Overhead",
     )
 
+    # Sort operators by total overhead (descending)
+    first_setup = next(iter(data.values())).set_index("operator-name")
+    ops = sorted(ops, key=lambda op: sum(first_setup.loc[op, m] for m in metrics), reverse=True)
+
     bar_color = {m: rgb_colors[i] for i, m in enumerate(metrics)}
+
+    # Compute normalization factors per side
+    def _max_total(op_list):
+        mx = 0
+        for setup in params:
+            op_df = data[setup].set_index("operator-name")
+            for op in op_list:
+                assert op in op_df.index, f"operator {op} not in {setup}"
+                mx = max(mx, sum(op_df.loc[op, m] for m in metrics))
+        return mx
+
+    lnorm = _max_total(lops) if two_axes else _max_total(ops)
+    rnorm = _max_total(rops) if two_axes else lnorm
 
     n_rows = 1
     n_cols = len(ops) + (1 if two_axes else 0)
@@ -205,12 +225,11 @@ def draw(
         if two_axes
         else list(tuple(range(0, n_cols)))
     )
-    g_ymin: float | None = None
-    g_ymax: float | None = None
     if two_axes:
         axs[len(lops)].set_visible(False)
 
     for setup in params:
+        op_df = data[setup].set_index("operator-name")
         for ax_idx in ax_idxs:
             ax = axs[ax_idx]
             ax.yaxis.set_major_locator(MaxNLocator(integer=True, nbins=3))
@@ -241,19 +260,6 @@ def draw(
                 ax.set_yticklabels([])
                 ax.tick_params(axis="y", length=0)
 
-            if two_axes and ax_idx >= len(lops) + 1:
-                ax.set_ylim((0, 1.1))
-            else:
-                _ymin, _ymax = ax.get_ylim()
-                if g_ymin is None:
-                    g_ymin = _ymin
-                else:
-                    g_ymin = min(g_ymin, _ymin)
-                if g_ymax is None:
-                    g_ymax = _ymax
-                else:
-                    g_ymax = max(g_ymax, _ymax)
-
             ax.set_xticks(x)
             ax.tick_params(axis="y", which="major", pad=1)
             ax.tick_params(axis="x", which="major", pad=1, rotation=65)
@@ -262,47 +268,48 @@ def draw(
             bar_width = 0.9
             ax.grid(axis="y", linestyle="--", alpha=0.5)
 
+            oi = ax_idxs.index(ax_idx)
+            op = ops[oi]
+            is_right = two_axes and oi >= len(lops)
+            norm = rnorm if is_right else lnorm
+
+            assert op in op_df.index, f"operator {op} not in {setup}"
+            row = op_df.loc[op]
+            tick = params.index(setup)
             bottom = 0
 
-            op = ops[ax_idxs.index(ax_idx)]
             ax.set_title(op, pad=5, fontsize=8)
-            med_p = (
-                data[setup].groupby("operator-name").get_group(op)["Prep Overhead"].mean()
-            )
-            med_c = (
-                data[setup].groupby("operator-name").get_group(op)["Call Overhead"].mean()
-            )
 
-            tick = params.index(setup)
+            call_val = row["Call Overhead"] / norm
+            prep_val = row["Prep Overhead"] / norm
 
             ax.bar(
-                tick,
-                med_c,
-                width=bar_width * 0.9,
-                bottom=bottom,
-                color=bar_color["Call Overhead"],
-                alpha=0.99,
+                tick, call_val,
+                width=bar_width * 0.9, bottom=bottom,
+                color=bar_color["Call Overhead"], alpha=0.99,
             )
-
-            bottom += med_c
+            bottom += call_val
 
             ax.bar(
-                tick,
-                med_p,
-                width=bar_width * 0.9,
-                bottom=bottom,
-                color=bar_color["Prep Overhead"],
-                alpha=0.99,
+                tick, prep_val,
+                width=bar_width * 0.9, bottom=bottom,
+                color=bar_color["Prep Overhead"], alpha=0.99,
             )
+
+    # Sync ylims
+    if two_axes:
+        for side_idxs in (ax_idxs[:len(lops)], ax_idxs[len(lops):]):
+            ymax = max(axs[i].get_ylim()[1] for i in side_idxs)
+            for i in side_idxs:
+                axs[i].set_ylim(0, ymax * 1.1)
+    else:
+        ymax = max(axs[i].get_ylim()[1] for i in ax_idxs)
+        for i in ax_idxs:
+            axs[i].set_ylim(0, ymax * 1.1)
 
     legend_handles = [
         mpatches.Patch(color=bar_color[m], label=m) for m in reversed(metrics)
     ]
-
-    if two_axes:
-        for i in range(len(lops)):
-            if g_ymin is not None and g_ymax is not None:
-                axs[i].set_ylim((g_ymin, g_ymax))
 
     if two_axes:
         axl = axs[len(lops) - 1]

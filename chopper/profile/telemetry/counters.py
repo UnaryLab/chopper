@@ -48,6 +48,8 @@ def main(
                 ','.join(iter_counters),
                 '-d',
                 str(counter_dir.resolve()),
+                '-f',
+                'csv',
                 '--',
                 *program
             )

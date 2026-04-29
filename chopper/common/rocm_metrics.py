@@ -1,14 +1,59 @@
 import pandas as pd
 import numpy as np
 from math import ceil
+from functools import wraps
 
 
-def derive_duration(df: pd.DataFrame) -> pd.DataFrame:
-    assert "dur" in df.columns
-    df['Duration'] = df['dur'].astype(float)
+def derive_wrapper(name, map):
+    def decorator(fun):
+        @wraps(fun)
+        def wrapper(df):
+            missing = [col for col in map.keys() if col not in df.columns]
+            assert not missing, f"Missing required columns: {missing}"
+            df[name] = fun(df)
+
+        wrapper.name = name
+        wrapper.map = map
+        return wrapper
+    return decorator
 
 
-    return df
+@derive_wrapper("Duration", {
+    "dur": ['sum'],
+})
+def derive_duration(df):
+    return df['dur'].astype(float) * 1e-6
+
+
+@derive_wrapper("Tensor Flops", {
+    "SQ_INSTS_VALU_MFMA_MOPS_BF16": ['sum'],
+})
+def derive_tensor_flops_rocm(df):
+    return 512 * df["SQ_INSTS_VALU_MFMA_MOPS_BF16"]
+
+
+@derive_wrapper("Tensor Util", {
+    "SQ_VALU_MFMA_BUSY_CYCLES": ['sum'],
+    "GRBM_GUI_ACTIVE": ['sum'],
+})
+def derive_tensor_util_rocm(df):
+    n_xcd = 8
+    n_cu = 304
+    return (
+        100 * df["SQ_VALU_MFMA_BUSY_CYCLES"] /
+        (n_cu * df["GRBM_GUI_ACTIVE"] / n_xcd * 4)
+    )
+
+
+@derive_wrapper("Cycle Duration", {
+    "GRBM_GUI_ACTIVE": ['sum'],
+})
+def derive_cycle_duration_rocm(df):
+    n_xcd = 8
+    freq = 2100
+    return df["GRBM_GUI_ACTIVE"] / n_xcd / freq
+
+
 def derive_kern_duration(df: pd.DataFrame) -> pd.DataFrame:
     assert "Kernel_Duration" in df.columns
     df['Kernel Duration'] = df['Kernel_Duration'].astype(float)

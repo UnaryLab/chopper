@@ -23,6 +23,9 @@ def get_data(
 ):
     """Load and pre-aggregate trace data for end-to-end visualization.
 
+    Computes per-kernel launch overhead before grouping so that overhead
+    reflects actual GPU idle gaps, not gaps between operator groups.
+
     Args:
         ts_files: List of paths to ts.pkl trace files
         configs: Config labels (e.g. "b1s4", "b2s8")
@@ -32,6 +35,10 @@ def get_data(
     """
     dfs = {}
     for ts_file, config in zip(ts_files, configs):
+        # Load all kernels first to get iteration start timestamps
+        all_df = get_df(ts_file, iter_idxs=None)
+        iter_start = all_df.groupby(["gpu", "iteration"])["ts"].min()
+
         df = get_df(
             ts_file,
             iter_idxs=None,
@@ -40,16 +47,34 @@ def get_data(
             remove_nan_chunks=True,
             remove_overlap=True,
             fix_names=True,
-            group_arr=[
-                "gpu", "chunk", "iteration", "layer",
-                "operator-type", "operator-name", "name",
-            ],
-            group_map={
-                "dur": ["sum", "last"],
-                "ts": ["first", "last"],
-            },
-            sort_value="ts_first",
         )
+        # Compute per-kernel launch overhead (intra-iteration only)
+        df = df.sort_values(["gpu", "iteration", "ts"]).reset_index(drop=True)
+        prev_end = (
+            df.groupby(["gpu", "iteration"])["ts"].shift(1)
+            + df.groupby(["gpu", "iteration"])["dur"].shift(1)
+        )
+        df["launch_overhead"] = np.maximum(0, df["ts"] - prev_end)
+        # First compute kernel: gap from first kernel (including comm)
+        first_idx = df.groupby(["gpu", "iteration"]).head(1).index
+        for idx in first_idx:
+            row = df.loc[idx]
+            start_ts = iter_start.loc[(row["gpu"], row["iteration"])]
+            df.loc[idx, "launch_overhead"] = max(0, row["ts"] - start_ts)
+
+        # Now group, summing launch_overhead alongside dur/ts
+        df = df.groupby(
+            ["gpu", "chunk", "iteration", "layer",
+             "operator-type", "operator-name", "name"],
+            dropna=False,
+        ).agg(
+            dur=("dur", "sum"),
+            dur_last=("dur", "last"),
+            ts_first=("ts", "first"),
+            ts_last=("ts", "last"),
+            launch_overhead=("launch_overhead", "sum"),
+        ).sort_values("ts_first").reset_index()
+
         dfs[config] = df
     return dfs
 
@@ -125,14 +150,6 @@ def draw(
     bubble_time = {}
     for setup in dfs.keys():
         df = dfs[setup]
-        df = df.sort_values(["gpu", "iteration", "ts_first"]).reset_index(drop=True)
-        prev_end_time = (
-            df.groupby(["gpu", "iteration"])["ts_last"].shift(1)
-            + df.groupby(["gpu", "iteration"])["dur_last"].shift(1)
-        )
-        df["launch_overhead"] = np.maximum(0, df["ts_first"] - prev_end_time)
-        df.loc[df.groupby(["gpu", "iteration"]).head(1).index, "launch_overhead"] = 0
-        dfs[setup] = df
 
         batch_size = int(re.findall(r"b(\d+)", setup)[0])
         seq_len = int(re.findall(r"s(\d+)", setup)[0]) << 10
@@ -149,17 +166,10 @@ def draw(
         )
         tok_p_sec[setup] = tokens / iter_time
 
-        chunk_time_ = (
-            dfs[setup]
-            .groupby(["gpu", "iteration", "chunk"])
-            .agg(
-                ts_first=("ts_first", "first"),
-                ts_last=("ts_last", "last"),
-                dur_last=("dur_last", "last"),
-            )
-        )
         chunk_time[setup] = (
-            (chunk_time_["ts_last"] + chunk_time_["dur_last"] - chunk_time_["ts_first"])
+            dfs[setup]
+            .groupby(["gpu", "iteration", "chunk"])["dur"]
+            .sum()
             .groupby("chunk")
             .median()
             .to_dict()

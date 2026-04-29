@@ -55,13 +55,17 @@ def _calc_thr_flops(bs: int, cl: int) -> dict:
         "f_mlp_dp": 2 * cl * d * hid * bs,
         "f_mlp_gp": 2 * cl * d * hid * bs,
         "f_mlp_up": 2 * cl * d * hid * bs,
-        "f_qkv_ip": 2 * cl * d * (heads + 2 * kv_heads) * head_dim * bs,
+        "f_q_ip": 2 * cl * d * heads * head_dim * bs,
+        "f_k_ip": 2 * cl * d * kv_heads * head_dim * bs,
+        "f_v_ip": 2 * cl * d * kv_heads * head_dim * bs,
         "b_attn_fa": 5 * (cl ** 2) * head_dim * heads * bs,
         "b_attn_op": 4 * cl * d * d * bs,
         "b_mlp_dp": 4 * cl * d * hid * bs,
         "b_mlp_gp": 4 * cl * d * hid * bs,
         "b_mlp_up": 4 * cl * d * hid * bs,
-        "b_qkv_ip": 4 * cl * d * (heads + 2 * kv_heads) * head_dim * bs,
+        "b_q_ip": 4 * cl * d * heads * head_dim * bs,
+        "b_k_ip": 4 * cl * d * kv_heads * head_dim * bs,
+        "b_v_ip": 4 * cl * d * kv_heads * head_dim * bs,
     }
 
 
@@ -85,7 +89,18 @@ def get_data(
     Returns:
         Dict mapping config -> {"data": agg DataFrame, "cdf": {op -> overlap CDF DataFrame}}
     """
-    raw = {config: load_pickle(fn) for config, fn in zip(configs, counter_files)}
+    raw = {}
+    for config, fn in zip(configs, counter_files):
+        df = load_pickle(fn)
+        # Filter to iterations that have counter data
+        if "GRBM_GUI_ACTIVE" in df.columns:
+            has_counters = df.groupby("iteration")["GRBM_GUI_ACTIVE"].apply(
+                lambda x: x.notna().any()
+            )
+            counter_iters = has_counters[has_counters].index.tolist()
+            assert len(counter_iters) > 0, f"no iterations with counter data in {fn}"
+            df = df[df["iteration"].isin(counter_iters)]
+        raw[config] = df
     breakdown_data = {}
 
     derive_cols = (
