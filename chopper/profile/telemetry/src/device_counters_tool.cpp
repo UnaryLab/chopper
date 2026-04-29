@@ -475,30 +475,10 @@ int tool_init(rocprofiler_client_finalize_t, void*)
     ROCPROFILER_CALL(rocprofiler_assign_callback_thread(g_counter_buffer, client_thread),
                      "failed to assign thread for counter buffer");
 
-    // Check for trigger file: if CHOPPER_START_FILE is set, wait for the file
-    // to exist before starting the context and sampling. This avoids GPU hangs
-    // caused by sampling during model init / NCCL init.
-    std::string start_file;
-    if(auto* env = std::getenv("CHOPPER_START_FILE"); env)
-        start_file = env;
-
-    // Deferred context start + sampling thread.
+    // Sampling thread.
     std::thread(
         [=]()
         {
-            if(!start_file.empty())
-            {
-                std::clog << "[tool] Waiting for trigger file: " << start_file << "\n";
-                while(!g_exit.load())
-                {
-                    if(access(start_file.c_str(), F_OK) == 0)
-                        break;
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                }
-                if(g_exit.load()) return;
-                std::clog << "[tool] Trigger file found, starting profiling\n";
-            }
-
             rocprofiler_start_context(g_ctx);
             std::clog << "[tool] Context started, sampling active\n";
 
