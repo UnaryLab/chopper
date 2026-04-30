@@ -22,9 +22,9 @@ jobs:
       image: rocm/dev-ubuntu-22.04:7.2
     steps:
       - uses: actions/checkout@v4
-      - run: apt-get update && apt-get install -y rocprofiler-sdk
       - run: pip install --upgrade pip
       - run: pip install -e ".[dev]"
+      - run: ruff check chopper/
       - run: pdoc chopper.common chopper.plots chopper.profile -o docs --no-show-source
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -80,8 +80,7 @@ def get_df(
         df = do_fix_names(df)
 
     if group_arr:
-        assert group_map, f"Null group_map is invalid with non-null group_arr: {
-            group_arr}"
+        assert group_map, f"Null group_map is invalid with non-null group_arr: {group_arr}"
         assert all(col in df.columns.tolist() for col in group_map.keys())
 
         missing_cols = tuple(col for col in group_map.keys()
