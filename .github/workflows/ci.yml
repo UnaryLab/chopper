@@ -13,6 +13,6 @@ jobs:
       image: rocm/dev-ubuntu-22.04:7.2
     steps:
       - uses: actions/checkout@v4
-      - run: apt-get update && apt-get install -y rocprofiler-sdk-dev
+      - run: apt-get update && apt-get install -y rocprofiler-sdk
       - run: pip install --upgrade pip
       - run: pip install -e .
