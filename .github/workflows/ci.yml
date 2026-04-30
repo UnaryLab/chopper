@@ -13,5 +13,4 @@ jobs:
       image: rocm/dev-ubuntu-22.04:7.2
     steps:
       - uses: actions/checkout@v4
-      - run: pip install ninja cmake
       - run: pip install -e .
