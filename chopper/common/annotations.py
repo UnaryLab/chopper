@@ -56,13 +56,13 @@ def no_overlap_mask(df: DataFrame) -> Series:
 
 def assign_chunks(df: DataFrame) -> DataFrame:
     """Assign training phase chunks (forward, backward, optimizer) to trace events.
-    
+
     Categorizes operators into forward pass, backward pass, or optimizer step
     based on operator name patterns.
-    
+
     Args:
         df: DataFrame containing trace data with 'operator-name' column
-        
+
     Returns:
         DataFrame with added 'chunk' column containing 'fwd', 'bwd', or 'opt'
     """
@@ -78,13 +78,13 @@ def assign_chunks(df: DataFrame) -> DataFrame:
 
 def fix_names(df: DataFrame) -> DataFrame:
     """Normalize operator names for consistent analysis.
-    
+
     Applies name transformations to standardize operator naming conventions,
     such as removing redundant prefixes and normalizing layer names.
-    
+
     Args:
         df: DataFrame containing trace data with 'operator-name' column
-        
+
     Returns:
         DataFrame with normalized operator names
     """
@@ -111,13 +111,13 @@ def fix_names(df: DataFrame) -> DataFrame:
 
 def assign_operator_type(df: DataFrame) -> DataFrame:
     """Categorize operators by computational type.
-    
+
     Classifies operators into GEMM (matrix multiply), FlashAttention, or
     vectorized operations based on operator name patterns.
-    
+
     Args:
         df: DataFrame containing trace data with 'operator-name' column
-        
+
     Returns:
         DataFrame with added 'operator-type' column containing 'GEMM', 'FA', or 'Vec'
     """

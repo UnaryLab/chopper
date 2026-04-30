@@ -90,15 +90,15 @@ def compute_overlap_cdf(
     sort_ratio: bool = True,
 ) -> DataFrame:
     """Compute cumulative distribution of communication overlap ratios.
-    
+
     Analyzes what fraction of computation kernels have communication overlap,
     producing a CDF for visualization.
-    
+
     Args:
         kernel_df: DataFrame containing computation kernels
         overlap_df: DataFrame containing communication operations
         sort_ratio: If True, sort by overlap ratio before computing CDF
-        
+
     Returns:
         DataFrame with 'overlap_ratio', 'cdf', and 'op_idx' columns
     """

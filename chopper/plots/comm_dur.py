@@ -1,7 +1,4 @@
 from chopper.common.load import get_df
-from chopper.common.colors import okabe_ito
-from chopper.common.cache import load_pickle
-from matplotlib.ticker import MaxNLocator
 from matplotlib.figure import Figure
 from chopper.common.annotations import no_overlap_mask
 
@@ -40,11 +37,11 @@ def draw(
     comm_kern_filter: list[str] = [],
 ):
     """Draw communication kernel duration scatter plots.
-    
+
     Creates a multi-panel scatter plot showing duration vs timestamp for
     different communication kernels across GPUs. Useful for identifying
     communication performance anomalies.
-    
+
     Args:
         fig: Matplotlib Figure object to draw on
         input_data: Tuple from get_data() containing trace data

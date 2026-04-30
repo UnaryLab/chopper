@@ -24,10 +24,10 @@ from chopper.common.annotations import PaperMode
 
 class PlotSelection(QWidget):
     """Widget for selecting available visualization plots.
-    
+
     Displays a list of available plot modules and provides a reload
     button for hot-reloading plot code during development.
-    
+
     Attributes:
         list: QListWidget containing available plot names
         reload_button: Button to reload the selected plot module
@@ -63,9 +63,9 @@ class PlotSelection(QWidget):
 
 class BoolSelection(QCheckBox):
     """Checkbox widget for boolean parameter configuration.
-    
+
     Simple checkbox labeled with parameter name and type annotation.
-    
+
     Attributes:
         name: Parameter name
         ann: Type annotation string
@@ -191,7 +191,7 @@ class StrlistSelection(QWidget):
 
     def browse_file(self):
         """Open file dialog to select file to replace selected item or add new."""
-        path = QFileDialog.getOpenFileName(self, f"Select File")[0]
+        path = QFileDialog.getOpenFileName(self, "Select File")[0]
         if path:
             # Check if an item is selected
             selected_items = self.list.selectedItems()
@@ -363,7 +363,7 @@ class StrSelection(QWidget):
 
     def browse_file(self):
         """Open file dialog to select file."""
-        path = QFileDialog.getOpenFileName(self, f"Select File", self.line_edit.text() or ".")[0]
+        path = QFileDialog.getOpenFileName(self, "Select File", self.line_edit.text() or ".")[0]
         if path:
             self.line_edit.setText(path)
 

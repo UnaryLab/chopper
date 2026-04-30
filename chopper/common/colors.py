@@ -14,12 +14,12 @@ ColorPalette = Mapping[str, Color]
 
 def rgb(r: int, g: int, b: int) -> Color:
     """Convert RGB integer values (0-255) to matplotlib float format (0-1).
-    
+
     Args:
         r: Red channel value (0-255)
         g: Green channel value (0-255)
         b: Blue channel value (0-255)
-        
+
     Returns:
         Tuple of (r, g, b) values normalized to 0-1 range
     """

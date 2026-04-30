@@ -7,27 +7,19 @@ of plot modules for rapid development iteration.
 import sys
 from PyQt6.QtWidgets import (
     QApplication,
-    QListWidgetItem,
     QMainWindow,
-    QListWidget,
     QVBoxLayout,
     QHBoxLayout,
     QWidget,
     QPushButton,
     QLabel,
-    QCheckBox,
-    QMenu,
     QScrollArea,
-    QFrame,
     QGroupBox,
-    QLineEdit,
     QSplitter,
     QFileDialog,
-    QToolButton,
     QMessageBox,
 )
-from PyQt6.QtGui import QIcon
-from PyQt6.QtCore import QSize, Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
@@ -54,13 +46,11 @@ import pkgutil
 import enum
 import pickle
 import os
-from typing import Any
-from abc import abstractmethod
 
 
 class SelectionType(enum.Enum):
     """Enumeration of selection panel types.
-    
+
     Attributes:
         plot: Plot module selection
         data: Data loading parameter selection
@@ -73,10 +63,10 @@ class SelectionType(enum.Enum):
 
 class Selections(QWidget):
     """Widget container for plot parameter selection panels.
-    
+
     Manages three collapsible panels (plot, data, draw) containing parameter
     selectors dynamically generated from plot module function signatures.
-    
+
     Attributes:
         plot_layout: Layout for plot selection widgets
         data_box: Collapsible group box for data loading parameters
@@ -180,10 +170,10 @@ class Selections(QWidget):
 
 class LoadDataThread(QThread):
     """Background thread for loading and processing trace data.
-    
+
     Executes the plot modules get_data() function in a separate thread
     to prevent GUI freezing during file I/O operations.
-    
+
     Attributes:
         module: Plot module containing get_data function
         param_map: Dict of parameter names to values
@@ -548,10 +538,10 @@ class MatplotlibWidget(QWidget):
 
 class MainWindow(QMainWindow):
     """Main application window for Chopper trace visualization.
-    
+
     Provides the primary GUI interface with plot selection, parameter configuration,
     data loading, and visualization. Supports saving/loading sessions and exporting plots.
-    
+
     Attributes:
         matplotlib_widget: Widget containing the plot canvas
         selections: Widget containing parameter selectors

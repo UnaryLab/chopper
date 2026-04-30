@@ -5,7 +5,6 @@ This module parses sbatch job output files (.out) to extract GPU power cap
 settings and visualize the distribution across GPUs and scenarios.
 """
 
-import os
 import re
 import matplotlib.patches as mpatches
 from loguru import logger

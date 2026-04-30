@@ -1,7 +1,7 @@
 """Data loading and preprocessing utilities for trace analysis."""
 
 import pandas as pd
-from typing import Optional, List, Dict, Sequence
+from typing import Optional, List, Dict
 
 from chopper.common.annotations import (
     no_overlap_mask,
@@ -14,11 +14,11 @@ from chopper.common.cache import load_pickle
 
 def select_iters(df: pd.DataFrame, iters: List) -> pd.DataFrame:
     """Select specific iterations from trace data.
-    
+
     Args:
         df: DataFrame containing trace data with 'iteration' column
         iters: List of iteration indices to select
-        
+
     Returns:
         Filtered DataFrame containing only selected iterations
     """
@@ -187,13 +187,13 @@ def get_straggler_contributors(
     agg_cols: List[str] = ['min', 'max', 'median', 'sum'],
 ):
     """Aggregate straggler contributions by operator or GPU.
-    
+
     Args:
         df: DataFrame from get_straggler_df() containing straggler metrics
         group_arr: List of columns to group by (e.g., ['gpu'], ['operator-name'])
         delta: If True, analyze s-delta instead of s-value
         agg_cols: List of aggregation functions to apply
-        
+
     Returns:
         DataFrame with aggregated straggler contributions
     """

@@ -6,7 +6,6 @@ and the rest (leaders), visualizing how stragglers inflate collective
 wait times. (Paper Figure: comm_straggler.pdf)
 """
 
-import numpy as np
 import matplotlib.patches as mpatches
 from matplotlib.lines import Line2D
 from matplotlib.figure import Figure

@@ -1411,7 +1411,7 @@ def derive_scratch_alloc(df: pd.DataFrame) -> pd.DataFrame:
     return df
 def derive_wpwg(df: pd.DataFrame) -> pd.DataFrame:
     assert "Workgroup_Size" in df.columns
-    wave_per_workgroup = df["Workgroup_Size"] / 256
+    df["Workgroup_Size"] / 256
     df["VGPR Count"] = df["VGPR_Count"]
 
 

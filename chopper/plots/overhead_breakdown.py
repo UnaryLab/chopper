@@ -293,25 +293,25 @@ def draw(
 
     for config in stack_data.keys():
         i, xlim_idx = setup_axis_map[config]
-        for l in range(n_rows):
-            op_sidx = l * ops_per_row
-            op_eidx = (l + 1) * ops_per_row + ((n_ops % n_rows) if l == n_rows - 1 else 0)
+        for row in range(n_rows):
+            op_sidx = row * ops_per_row
+            op_eidx = (row + 1) * ops_per_row + ((n_ops % n_rows) if row == n_rows - 1 else 0)
             y = np.arange(op_eidx - op_sidx)
-            ax = axs[l][i]
+            ax = axs[row][i]
             ax.grid(axis="x", linestyle="-", alpha=0.5)
-            xlim = xlims[l][xlim_idx]
+            xlim = xlims[row][xlim_idx]
             ax.yaxis.set_major_locator(MaxNLocator(integer=True, nbins=3))
             ax.set_xlim(0, xlim)
             ax.set_yticks(y)
             if i == 0:
-                if l == n_rows - 1:
+                if row == n_rows - 1:
                     ax.set_xlabel("norm duration", labelpad=0)
                     ax.xaxis.set_label_coords(-0.15, -0.250)
                 ax.set_yticklabels(ops[op_sidx:op_eidx])
             else:
                 ax.tick_params(axis="y", length=0)
                 ax.set_yticklabels([])
-            if l != 0:
+            if row != 0:
                 ax.text(
                     0.50, -0.4, config,
                     transform=ax.transAxes,

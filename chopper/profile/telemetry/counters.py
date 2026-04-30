@@ -1,7 +1,6 @@
 from pathlib import Path
 import subprocess
 from math import ceil
-from loguru import logger
 
 
 def main(

@@ -3,7 +3,6 @@ from enum import Enum, auto
 from matplotlib.figure import Figure
 from typing import Any, Callable
 
-import chopper
 import matplotlib.patches as mpatches
 import numpy as np
 import matplotlib.pyplot as plt
@@ -404,14 +403,6 @@ derives = {
                 "TCC_REQ_sum",
             ),
             derive_l2_cache_bw,
-    ),
-    'L2 Bandwidth Percent of Peak':
-        (
-            '%',
-            (
-                "TCC_REQ_sum",
-            ),
-            derive_l2_cache_bw_pop,
     ),
     'Wavefront Occupancy':
         (
@@ -1622,7 +1613,7 @@ def draw(
             vl1_cache_buff = mpatches.Rectangle(
                 (vl1_cache_buff_x[0], vl1_cache_buff_y), vl1_cache_buff_width, vl1_cache_buff_height, edgecolor='red', facecolor='gray', lw=2)
             memory_analysis_ax.text(vl1_cache_buff_x[0]+ibuff_diff, vl1_cache_buff_y+vl1_cache_buff_height+ibuff_diff,
-                                    f"Vector L1 Cache", color="gray", fontsize=fontsize, ha='left')
+                                    "Vector L1 Cache", color="gray", fontsize=fontsize, ha='left')
             memory_analysis_ax.text(vl1_cache_buff_x[0]+ibuff_diff, vl1_cache_buff_y+vl1_cache_buff_height*3/5,
                                     f"Hit: {agg_func(df['vL1D Hit Rate'], Norm.PERC, duration, bw)}%", color="black", fontsize=fontsize, ha='left')
             memory_analysis_ax.text(vl1_cache_buff_x[0]+ibuff_diff, vl1_cache_buff_y+vl1_cache_buff_height*4/5,

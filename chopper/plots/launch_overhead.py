@@ -1,5 +1,4 @@
 import numpy as np
-import re
 from matplotlib.lines import Line2D
 from matplotlib.figure import Figure
 
@@ -29,17 +28,17 @@ def agg(
     sum_cols_map={},
 ):
     """Aggregate trace data with custom derivations and grouping.
-    
+
     Groups trace data by specified columns and applies aggregation functions,
     with optional pre- and post-processing derivation steps.
-    
+
     Args:
         df: Input DataFrame to aggregate
         group_arr: List of column names to group by
         derive_cols_before: Optional list of derivation functions to apply before aggregation
         derive_cols_after: Optional list of derivation functions to apply after aggregation
         sum_cols_map: Dict mapping column names to aggregation functions
-        
+
     Returns:
         Aggregated DataFrame with flattened column names
     """
@@ -158,11 +157,11 @@ def draw(
     two_axes: bool = True,
 ):
     """Draw launch overhead comparison across configurations.
-    
+
     Creates a multi-panel stacked bar chart comparing prep and call overhead across
     different operators and parameter configurations. Supports split y-axes
     for operators with different overhead scales (e.g., communication vs compute).
-    
+
     Args:
         fig: Matplotlib Figure object to draw on
         input_data: Dict from get_data() containing overhead metrics

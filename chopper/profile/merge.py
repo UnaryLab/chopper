@@ -49,7 +49,8 @@ def parse(filename):
             annotations.append({'name': e['name'], 'ts': ts, 'end_ts': ts + dur})
         elif cat == 'fwdbwd':
             fid = e['id']
-            if fid not in fwdbwd: fwdbwd[fid] = {}
+            if fid not in fwdbwd:
+                fwdbwd[fid] = {}
             fwdbwd[fid]['bwd' if 'bp' in e else 'fwd'] = int(e['ts'] * 1000)
         elif cat == 'kernel':
             kernels.append({
