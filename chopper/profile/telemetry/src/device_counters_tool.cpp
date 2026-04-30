@@ -480,7 +480,13 @@ int tool_init(rocprofiler_client_finalize_t, void*)
         {
             std::clog << "[tool] Waiting for first kernel dispatch...\n";
             while(!g_exit.load() && !g_first_dispatch.load())
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            {
+                // Force-flush the trace buffer so the first dispatch record
+                // is delivered to the callback immediately, rather than
+                // waiting for the buffer watermark to be reached.
+                rocprofiler_flush_buffer(g_trace_buffer);
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
             if(g_exit.load()) { g_exit.store(false); return; }
 
             ROCPROFILER_CALL(rocprofiler_start_context(g_counter_ctx),
