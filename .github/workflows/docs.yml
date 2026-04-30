@@ -16,6 +16,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    container:
+      image: rocm/dev-ubuntu-22.04:7.2
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

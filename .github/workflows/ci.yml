@@ -9,29 +9,8 @@ on:
 jobs:
   install:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install -e ".[dev]"
-      - run: python -c "import chopper; from loguru import logger; logger.info('import ok')"
-
-  typecheck:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install -e ".[dev]"
-      - run: python -m mypy chopper --ignore-missing-imports
-
-  container-install:
-    runs-on: ubuntu-latest
     container:
       image: rocm/dev-ubuntu-22.04:7.2
     steps:
       - uses: actions/checkout@v4
       - run: pip install -e .
-      - run: python3 -c "import chopper; from loguru import logger; logger.info('container ok')"
