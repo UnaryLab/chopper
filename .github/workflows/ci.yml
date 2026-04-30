@@ -13,4 +13,5 @@ jobs:
       image: rocm/dev-ubuntu-22.04:7.2
     steps:
       - uses: actions/checkout@v4
+      - run: pip install --upgrade pip
       - run: pip install -e .
