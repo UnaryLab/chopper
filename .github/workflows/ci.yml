@@ -30,7 +30,7 @@ jobs:
   container-install:
     runs-on: ubuntu-latest
     container:
-      image: rocm/primus:v26.2
+      image: rocm/dev-ubuntu-22.04:7.2
     steps:
       - uses: actions/checkout@v4
       - run: pip install -e .
