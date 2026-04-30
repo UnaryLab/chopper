@@ -1,4 +1,4 @@
-find_package(rocprofiler-sdk REQUIRED HINTS ${ROCM_PATH})
+find_package(rocprofiler-sdk REQUIRED HINTS ${ROCM_PATH} /opt/rocm)
 
 add_library(chopper_device_counters SHARED device_counters_tool.cpp)
 
