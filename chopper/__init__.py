@@ -9,6 +9,8 @@ This is Chopper:
 ![Chopper](chopper.jpg)
 """
 
+__all__ = ["common", "plots", "profile"]
+
 import sys
 from loguru import logger
 
