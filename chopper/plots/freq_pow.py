@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import matplotlib.patches as mpatches
+from loguru import logger
 from chopper.common.colors import rgb
 from chopper.common.cache import load_pickle
 from chopper.common.annotations import PaperMode
@@ -78,8 +79,8 @@ def draw(
     per_variant_norm: bool = False,
     paper_mode: PaperMode = PaperMode(),
 ):
-    print("got starts:", starts)
-    print("got stops:", stops)
+    logger.debug("got starts: {}", starts)
+    logger.debug("got stops: {}", stops)
     """Draw normalized frequency and power metrics over time.
 
     Creates a multi-panel scatter plot showing GPU frequency, memory frequency,

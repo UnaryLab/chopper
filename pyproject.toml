@@ -5,7 +5,10 @@ build-backend = "scikit_build_core.build"
 [project]
 name = "chopper"
 version = "0.10"
-dependencies = ["pandas", "numpy", "matplotlib", "mypy", "ijson", "PyQt6"]
+dependencies = ["pandas", "numpy", "matplotlib", "mypy", "ijson", "PyQt6", "loguru"]
+
+[project.optional-dependencies]
+dev = ["pdoc", "mypy"]
 
 [tool.scikit-build]
 cmake.build-type = "Release"

@@ -1,6 +1,7 @@
 import os
 from time import monotonic_ns
 import pandas as pd
+from loguru import logger
 from amdsmi import (
     amdsmi_get_processor_handles,
     amdsmi_get_gpu_metrics_info,
@@ -44,7 +45,7 @@ def _main(
         os.makedirs(outdir, exist_ok=True)
         df.to_pickle(f"{outdir}/{filename}")
     except AmdSmiException as e:
-        print(e)
+        logger.warning(e)
 
 
 def main(
@@ -62,5 +63,5 @@ def main(
         _main(stop, filename, outdir, on, off)
         amdsmi_shut_down()
     except AmdSmiException as e:
-        print(e)
+        logger.warning(e)
     return 0

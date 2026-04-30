@@ -5,6 +5,7 @@ import re
 import numpy as np
 import pandas as pd
 from concurrent.futures import ProcessPoolExecutor
+from loguru import logger
 
 
 def assign_ranges(timestamps, ranges):
@@ -286,7 +287,7 @@ def merge_counters(df_ts, counter_batches):
 
     gpus = sorted(df_ts["gpu"].unique())
     if len(gpus) != n_counter_gpus:
-        print(f"WARNING: {len(gpus)} GPUs in trace but {n_counter_gpus} counter files")
+        logger.warning(f"{len(gpus)} GPUs in trace but {n_counter_gpus} counter files")
 
     # Load and combine counters per GPU
     df_cntr = pd.concat(
@@ -294,13 +295,13 @@ def merge_counters(df_ts, counter_batches):
             map(get_combined_counters, per_gpu))],
         ignore_index=True,
     )
-    print(f"Loaded {len(df_cntr)} counter rows across {n_counter_gpus} GPUs")
+    logger.info(f"Loaded {len(df_cntr)} counter rows across {n_counter_gpus} GPUs")
 
     kname = "Kernel_Name"
 
     # Select first iteration from trace for matching
     first_iter = df_ts["iteration"].dropna().unique().min()
-    print(f"Matching counters against iteration {first_iter}")
+    logger.info(f"Matching counters against iteration {first_iter}")
     match_mask = df_ts["iteration"] == first_iter
     df_match = df_ts[match_mask].copy()
     df_rest = df_ts[~match_mask].copy()
@@ -311,9 +312,9 @@ def merge_counters(df_ts, counter_batches):
     cntr_only = cntr_names - ts_names
     ts_only = ts_names - cntr_names
     if cntr_only:
-        print(f"WARNING: {len(cntr_only)} kernels in counters but not trace")
+        logger.warning(f"{len(cntr_only)} kernels in counters but not trace")
     if ts_only:
-        print(f"WARNING: {len(ts_only)} kernels in trace but not counters")
+        logger.warning(f"{len(ts_only)} kernels in trace but not counters")
 
     # Remove mismatched kernels from counter side
     df_cntr = df_cntr[~df_cntr[kname].isin(cntr_only)]
@@ -350,13 +351,71 @@ def merge_counters(df_ts, counter_batches):
     # Report
     counter_cols = [c for c in df_merged.columns if c not in df_ts.columns and c != "_mi"]
     n_matched = df_merged[counter_cols[0]].notna().sum() if counter_cols else 0
-    print(f"Merged {n_matched}/{len(df_match)} kernels with counters")
-    print(f"Counter columns: {counter_cols}")
+    logger.info(f"Merged {n_matched}/{len(df_match)} kernels with counters")
+    logger.info(f"Counter columns: {counter_cols}")
 
     return df_result
 
 
-def main(traces, pickles, counters, output):
+def merge_device_counters(device_dir, output):
+    """Store device sampling CSVs into a pickle. No transformations.
+
+    Reads counter_samples_rank*.csv and kernel_traces_rank*.csv from
+    chopper_device_counters*/ subdirs.
+    """
+    from pathlib import Path
+
+    device_dir = Path(device_dir)
+    groups = sorted(device_dir.glob("chopper_device_counters*"))
+    assert groups, f"No chopper_device_counters* dirs in {device_dir}"
+
+    counter_samples = {}
+    kernel_traces = {}
+    counter_to_group = {}  # {counter_name: group_index}
+
+    for gi, group_dir in enumerate(groups):
+        counter_files = sorted(group_dir.glob("counter_samples_rank*.csv"))
+        trace_files = sorted(group_dir.glob("kernel_traces_rank*.csv"))
+        assert counter_files, f"No counter_samples_rank*.csv in {group_dir}"
+        assert trace_files, f"No kernel_traces_rank*.csv in {group_dir}"
+
+        for cf in counter_files:
+            rank = int(cf.stem.split("_rank")[1])
+            df = pd.read_csv(cf)
+            assert len(df) > 0, f"Empty counter file: {cf}"
+            counter_samples[(gi, rank)] = df
+            for name in df["counter_name"].unique():
+                counter_to_group[name] = gi
+
+        for tf in trace_files:
+            rank = int(tf.stem.split("_rank")[1])
+            df = pd.read_csv(tf)
+            if len(df) > 0:
+                kernel_traces[(gi, rank)] = df
+
+    result = {
+        "counter_samples": counter_samples,
+        "kernel_traces": kernel_traces,
+        "counter_to_group": counter_to_group,
+    }
+
+    import pickle
+    with open(output, "wb") as f:
+        pickle.dump(result, f)
+
+    ranks = sorted(set(r for _, r in counter_samples.keys()))
+    total_samples = sum(len(df) for df in counter_samples.values())
+    total_kernels = sum(len(df) for df in kernel_traces.values())
+    logger.info(f"Wrote {output}: {total_samples} counter samples, {total_kernels} kernel records")
+    logger.info(f"  Groups: {len(groups)}, Ranks: {ranks}")
+    logger.info(f"  Counter -> group: {counter_to_group}")
+
+
+def main(traces, pickles, counters, device_dir, output):
+    if device_dir:
+        merge_device_counters(device_dir, output)
+        return
+
     assert not (traces and pickles), "pass either -t or -p, not both"
     assert traces or pickles, "pass -t (traces) or -p (pickles)"
     assert not (traces and counters), "cannot use -c with -t; merge traces first, then add counters with -p"
@@ -369,7 +428,7 @@ def main(traces, pickles, counters, output):
         df = merge_counters(df, counters)
         df.to_pickle(output)
         t1 = time.time()
-        print(f"Merged counters into {len(df)} kernels -> {output} in {t1-t0:.2f}s")
+        logger.info(f"Merged counters into {len(df)} kernels -> {output} in {t1-t0:.2f}s")
         return
 
     if pickles:
@@ -378,7 +437,7 @@ def main(traces, pickles, counters, output):
         df = df.sort_values('ts').reset_index(drop=True)
         df.to_pickle(output)
         t1 = time.time()
-        print(f"Merged {len(pickles)} pickles, {len(df)} kernels -> {output} in {t1-t0:.2f}s")
+        logger.info(f"Merged {len(pickles)} pickles, {len(df)} kernels -> {output} in {t1-t0:.2f}s")
         return
 
     if len(traces) == 1:
@@ -395,26 +454,30 @@ def main(traces, pickles, counters, output):
     df.to_pickle(output)
     t1 = time.time()
 
-    print(f"Wrote {len(df)} kernels to {output} in {t1-t0:.2f}s")
-    print(f"Columns: {list(df.columns)}")
+    logger.info(f"Wrote {len(df)} kernels to {output} in {t1-t0:.2f}s")
+    logger.info(f"Columns: {list(df.columns)}")
 
 
 if __name__ == '__main__':
     from argparse import ArgumentParser
     parser = ArgumentParser(description=(
         "Merge PyTorch traces into a kernel pickle, combine pickles, "
-        "or join hardware counters with an existing pickle.\n"
-        "  1) -t trace*.json -o ts.pkl        (parse traces)\n"
-        "  2) -p iter*.pkl -o ts.pkl           (combine pickles)\n"
-        "  3) -p ts.pkl -c batch0/*.csv -o out.pkl  (add counters)\n"
+        "join hardware counters, or merge device sampling data.\n"
+        "  1) -t trace*.json -o ts.pkl              (parse traces)\n"
+        "  2) -p iter*.pkl -o ts.pkl                 (combine pickles)\n"
+        "  3) -p ts.pkl -c batch0/*.csv -o out.pkl   (add counters)\n"
+        "  4) --device-dir outputs/run -o device.pkl  (device sampling)\n"
     ))
     parser.add_argument('-t', '--traces', nargs='+')
     parser.add_argument('-p', '--pickles', nargs='+')
     parser.add_argument('-c', '--counters', action='append', nargs='+',
                         help='Counter CSV files (one -c per batch, sorted = GPU order)')
+    parser.add_argument('--device-dir',
+                        help='Device sampling output directory (chopper --device)')
     parser.add_argument('-o', '--output', required=True)
     args = parser.parse_args()
     main(sorted(args.traces) if args.traces else None,
          sorted(args.pickles) if args.pickles else None,
          args.counters,
+         args.device_dir,
          args.output)

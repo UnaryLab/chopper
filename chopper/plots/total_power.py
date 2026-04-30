@@ -12,7 +12,7 @@ from matplotlib.figure import Figure
 from matplotlib.ticker import MaxNLocator
 
 from chopper.common.colors import rgb
-from chopper.common.printing import info
+from loguru import logger
 from chopper.common.annotations import PaperMode
 
 
@@ -50,15 +50,17 @@ def draw(
     configs = list(data.keys())
 
     ylabel_names = {
-        "current_gfxclk": "min norm",
-        "current_socket_power": "max norm",
+        "current_gfxclk": "norm freq",
+        "current_uclk": "norm mclk",
+        "current_socket_power": "norm power",
     }
     legend_names = {
-        "current_gfxclk": "Frequency",
+        "current_gfxclk": "GFX Freq",
+        "current_uclk": "Mem Freq",
         "current_socket_power": "Power",
     }
-    rgb_colors = (rgb(0x1A, 0x85, 0xFF), rgb(0xD4, 0x11, 0x59))
-    color_dict = {metric: rgb_colors[i] for i, metric in enumerate(metrics)}
+    rgb_colors = (rgb(0x1A, 0x85, 0xFF), rgb(0x66, 0xC2, 0xA5), rgb(0xD4, 0x11, 0x59))
+    color_dict = {metric: rgb_colors[i % len(rgb_colors)] for i, metric in enumerate(metrics)}
 
     n_rows = len(metrics)
     n_cols = len(configs)
@@ -77,17 +79,13 @@ def draw(
         for r in range(n_rows)
     )
 
-    val_range = 0.08
-    ylims = {
-        "current_socket_power": (1 - val_range, 1.010),
-        "current_gfxclk": (0.995, 1 + val_range),
-    }
+    ylims = {}
 
     gymin = {metric: None for metric in metrics}
     gymax = {metric: None for metric in metrics}
 
     for config in configs:
-        info(f"Drawing: {config}")
+        logger.info(f"Drawing: {config}")
         metric_df = data[config].copy()
         metric_df["gpu"] -= 2
 
@@ -104,15 +102,12 @@ def draw(
 
         for metric in metrics:
             tmp_m = metric_df.groupby(["index"])[metric].sum().reset_index()
-            if metric == "current_socket_power":
-                norm_tmp_m = tmp_m[metric].max()
-            else:
-                norm_tmp_m = tmp_m[metric].min()
+            norm_tmp_m = tmp_m[metric].max()
             ax = axs[metrics.index(metric)][configs.index(config)]
             ax.scatter(
                 tmp_m["index"], tmp_m[metric] / norm_tmp_m,
                 color=color_dict[metric],
-                linewidth=0.5, linestyle="-", s=0.05, alpha=0.01,
+                linewidth=0.5, linestyle="-", s=0.3, alpha=0.3,
             )
             ax.grid(axis="y", linestyle="--", alpha=0.5)
             if metric in ylims:

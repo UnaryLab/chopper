@@ -1,7 +1,7 @@
 from pathlib import Path
 import subprocess
 from math import ceil
-from chopper.common.printing import info
+from loguru import logger
 
 
 def main(

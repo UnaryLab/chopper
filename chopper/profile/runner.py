@@ -1,5 +1,5 @@
 from multiprocessing import Process, Value
-from chopper.common.printing import warn
+from loguru import logger
 from ctypes import c_bool
 
 
@@ -30,9 +30,9 @@ class Runner:
         num_stoppers = sum(self.soc)
         assert num_stoppers <= 1, "Only one process should stop the others"
         if num_stoppers == 0:
-            warn("No processes will trigger a stop!")
-            warn("  Make sure to use the context manager to stop the processes.")
-            warn("  (i.e., `with Runner() as runner:`)")
+            logger.warning("No processes will trigger a stop!")
+            logger.warning("  Make sure to use the context manager to stop the processes.")
+            logger.warning("  (i.e., `with Runner() as runner:`)")
 
         for child in self.children:
             child.start()

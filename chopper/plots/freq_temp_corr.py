@@ -13,7 +13,7 @@ from matplotlib.ticker import MaxNLocator
 
 from chopper.common.colors import okabe_ito
 from chopper.common.cache import load_pickle
-from chopper.common.printing import info
+from loguru import logger
 from chopper.common.annotations import PaperMode
 
 
@@ -136,10 +136,10 @@ def draw(
             sampling_stats_df["ts_first"] - sampling_stats_df["ts_first"].shift(1)
         )
 
-        info(
+        logger.info(
             f"Frequency sampling duration: {sampling_stats_df['sampling_dur'].median() * 1e-6:.2f}ms"
         )
-        info(
+        logger.info(
             f"Frequency sampling period: {sampling_stats_df['sampling_period'].median() * 1e-6:.2f}ms"
         )
 

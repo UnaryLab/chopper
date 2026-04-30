@@ -8,6 +8,7 @@ settings and visualize the distribution across GPUs and scenarios.
 import os
 import re
 import matplotlib.patches as mpatches
+from loguru import logger
 from matplotlib.ticker import MaxNLocator
 from matplotlib.figure import Figure
 from chopper.common.colors import okabe_ito
@@ -35,7 +36,7 @@ def _get_final_powercaps(fn: str, config: str = 'b2s4') -> dict[int, int]:
         r'(\d+),(Successfully set power cap|Power cap is already set) to (\d+)', megaline)
     power_caps: dict[int, int] = {}
     for gpu, _, cap in matches:
-        print(gpu, cap)
+        logger.debug("{} {}", gpu, cap)
         power_caps[int(gpu)] = int(cap)
     return power_caps
 

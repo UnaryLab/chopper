@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.patches as mpatches
 from chopper.common.colors import rgb
 from chopper.common.cache import load_pickle
-from chopper.common.printing import info
+from loguru import logger
 from chopper.common.annotations import PaperMode
 from matplotlib.ticker import MaxNLocator
 from matplotlib.figure import Figure
@@ -35,6 +35,7 @@ def get_data(
 def draw(
     fig: Figure,
     input_data,
+    metrics: list[str] = ["current_gfxclk", "current_socket_power"],
     starts: list[float] = [0.0],
     stops: list[float] = [1.0],
     ymaxs: list[float] = [float('inf')],
@@ -44,13 +45,10 @@ def draw(
 ):
     """Draw rolling average power and frequency metrics.
 
-    Creates a multi-panel line plot showing rolling 95th percentile power
-    consumption and 5th percentile frequency over time, normalized to
-    their baseline values.
-
     Args:
         fig: Matplotlib Figure object to draw on
         input_data: Dict from get_data() containing GPU telemetry
+        metrics: Which columns to plot (one row per metric)
         starts: Start fraction of time window (0-1) for each config
         stops: Stop fraction of time window (0-1) for each config
         per_variant_norm: If True, normalize each config independently
@@ -58,19 +56,14 @@ def draw(
     """
     data = input_data
     configs = list(data.keys())
-    metrics = (
-        'current_gfxclk',
-        'current_socket_power',
-    )
-    freq_metrics = {'current_gfxclk'}
+    metrics = tuple(metrics)
     legend_names = {
-        'current_gfxclk': 'Frequency',
+        'current_gfxclk': 'GFX Freq',
+        'current_uclk': 'Mem Freq',
         'current_socket_power': 'Power',
     }
-    color_dict = {
-        'current_gfxclk': rgb(0x1A, 0x85, 0xFF),  # Frequency - blue
-        'current_socket_power': rgb(0xD4, 0x11, 0x59),  # Power - red
-    }
+    rgb_colors = (rgb(0x1A, 0x85, 0xFF), rgb(0x66, 0xC2, 0xA5), rgb(0xD4, 0x11, 0x59))
+    color_dict = {m: rgb_colors[i % len(rgb_colors)] for i, m in enumerate(metrics)}
 
     n_rows = len(metrics)
     n_cols = len(configs)
@@ -136,31 +129,23 @@ def draw(
             for metric in metrics:
                 rolling_col = f'{metric}_rolling'
                 rolling_vals = tmp_m[metric][config][rolling_col].dropna()
-                if metric in freq_metrics:
-                    config_norm[config][metric] = rolling_vals.min()
-                else:
-                    config_norm[config][metric] = rolling_vals.max()
+                config_norm[config][metric] = rolling_vals.max()
     else:
         global_norm: dict[str, float | None] = {metric: None for metric in metrics}
         for config in configs:
             for metric in metrics:
                 rolling_col = f'{metric}_rolling'
                 rolling_vals = tmp_m[metric][config][rolling_col].dropna()
-                if metric in freq_metrics:
-                    norm_val = rolling_vals.min()
-                else:
-                    norm_val = rolling_vals.max()
+                norm_val = rolling_vals.max()
 
                 cur = global_norm[metric]
                 if cur is None:
                     global_norm[metric] = norm_val
-                elif metric in freq_metrics:
-                    global_norm[metric] = min(cur, norm_val)
                 else:
                     global_norm[metric] = max(cur, norm_val)
 
     for vi, config in enumerate(configs):
-        info(f"Drawing: {config}")
+        logger.info(f"Drawing: {config}")
         for ci, metric in enumerate(metrics):
             ax = axs[metrics.index(metric)][vi]
 
@@ -281,6 +266,7 @@ def draw(
 def main(
     gpu_files: list[str] = ["./gpu.pkl"],
     configs: list[str] = ["default"],
+    metrics: list[str] = ["current_gfxclk", "current_socket_power"],
     starts: list[float] = [0.0],
     stops: list[float] = [1.0],
     ymaxs: list[float] = [float('inf')],
@@ -291,7 +277,7 @@ def main(
 ):
     fig = Figure(figsize=figsize)
     input_data = get_data(gpu_files, configs)
-    draw(fig, input_data, starts, stops, ymaxs, ymins, per_variant_norm, PaperMode())
+    draw(fig, input_data, metrics, starts, stops, ymaxs, ymins, per_variant_norm, PaperMode())
     fig.savefig(filename, dpi=300)
 
 if __name__ == "__main__":

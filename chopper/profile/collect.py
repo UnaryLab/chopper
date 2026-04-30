@@ -1,4 +1,5 @@
 from argparse import ArgumentParser
+from loguru import logger
 from chopper.profile.telemetry import cpu, gpu, counters, device_counters
 from chopper.profile.runner import Runner
 
@@ -15,7 +16,7 @@ def main(program,
          telemetry_off=0.1,
          sample_ms=1):
     if len(program) == 0:
-        print("Please pass a program to run")
+        logger.error("Please pass a program to run")
         return -1
 
     runner = Runner()

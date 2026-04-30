@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from math import ceil
 from functools import wraps
+from loguru import logger
 
 
 def derive_wrapper(name, map):
@@ -64,7 +65,7 @@ def derive_elapsed(df: pd.DataFrame) -> pd.DataFrame:
     assert "dur" in df.columns and "timestamp_first" in df.columns and "timestamp_last" in df.columns
     elapsed = (df["timestamp_last"].astype(float) +
                df["duration_last"].astype(float) - df["timestamp_first"].astype(float))
-    print(elapsed.index)
+    logger.debug(elapsed.index)
     df['Elapsed'] = elapsed
 
 

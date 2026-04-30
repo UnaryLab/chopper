@@ -1,6 +1,6 @@
 from chopper.common.load import get_straggler_df
 from chopper.common.colors import okabe_ito
-from chopper.common.printing import info
+from loguru import logger
 from chopper.common.annotations import PaperMode
 import matplotlib.patches as mpatches
 from matplotlib.ticker import MaxNLocator
@@ -109,7 +109,7 @@ def draw(
         global_max_lead = max(global_max_lead, total_lead_df["total_lead"].max())
 
     for df, config in zip(dfs, configs):
-        info(f"Drawing: {config}")
+        logger.info(f"Drawing: {config}")
 
         if not use_elapsed:
             iter_time = (
