@@ -1,12 +1,27 @@
-// Combined device counter sampling + kernel dispatch tracing tool.
-// Based on rocm-examples device_profiling/client.cpp (counter sampling)
-// with kernel dispatch tracing added from api_buffered_tracing/client.cpp.
+// Device counter sampling + kernel dispatch tracing tool.
+//
+// Uses two rocprofiler-sdk contexts to avoid GPU hangs during init:
+//
+//   1. Tracing context (g_ctx): started immediately. Handles kernel dispatch
+//      tracing and code object callbacks. This is safe during HSA/NCCL init
+//      because it only installs callbacks -- no PMC hardware access.
+//
+//   2. Counter context (g_counter_ctx): started ONLY after the first kernel
+//      dispatch is observed via the tracing context. Starting the device
+//      counting service configures PMC hardware, which hangs the GPU if done
+//      during HSA or NCCL initialization. Waiting for the first dispatch
+//      guarantees that init is complete.
+//
+// IMPORTANT: counter samples will not include the very first kernel dispatches
+// (those that occur before the counter context starts). Kernel dispatch traces
+// are captured from the start, but PMC counter data begins ~100ms after the
+// first kernel is seen.
 //
 // Loaded via LD_PRELOAD. Outputs kernel_traces.csv and counter_samples.csv.
 //
 // Env var configuration:
-//   CHOPPER_COUNTERS     - comma-separated counter names (default: SQ_WAVES)
-//   CHOPPER_SAMPLE_MS    - sampling interval in ms (default: 1)
+//   CHOPPER_COUNTERS       - comma-separated counter names (default: SQ_WAVES)
+//   CHOPPER_SAMPLE_MS      - sampling interval in ms (default: 1)
 //   CHOPPER_COUNTER_OUTPUT - counter CSV path (default: counter_samples.csv)
 //   CHOPPER_TRACE_OUTPUT   - trace CSV path (default: kernel_traces.csv)
 
@@ -23,11 +38,9 @@
 #include <sstream>
 #include <string>
 #include <thread>
-#include <unistd.h>
 #include <unordered_map>
 #include <vector>
 
-// Error checking macro (matches rocprofiler_get_status_string signature on ROCm 7.x)
 #define ROCPROFILER_CALL(result, msg)                                                    \
     {                                                                                    \
         rocprofiler_status_t CHECKSTATUS = result;                                       \
@@ -102,18 +115,21 @@ std::mutex                    g_counter_samples_mutex;
 //
 // Shared state
 //
-rocprofiler_context_id_t g_ctx{0};
+rocprofiler_context_id_t g_ctx{0};         // dispatch tracing (started immediately)
+rocprofiler_context_id_t g_counter_ctx{0}; // device counting (deferred until first dispatch)
 rocprofiler_buffer_id_t  g_trace_buffer{};
 rocprofiler_buffer_id_t  g_counter_buffer{};
 std::atomic<bool>        g_exit{false};
+std::atomic<bool>        g_thread_started{false};
+std::atomic<bool>        g_first_dispatch{false}; // set by buffer callback on first kernel
 int                      g_sample_interval_ms = 1;
 
 std::unordered_map<uint64_t, rocprofiler_counter_config_id_t> g_profile_cache;
 
 //
-// Code object callback -- from api_buffered_tracing example.
-// Tracks kernel symbols for name resolution and flushes the trace buffer
-// before code objects unload so kernel name pointers remain valid.
+// Code object callback -- tracks kernel symbols for name resolution.
+// Flushes the trace buffer before code objects unload so kernel name
+// pointers remain valid.
 //
 void tool_code_object_callback(rocprofiler_callback_tracing_record_t record,
                                rocprofiler_user_data_t*              user_data,
@@ -124,8 +140,6 @@ void tool_code_object_callback(rocprofiler_callback_tracing_record_t record,
     {
         if(record.phase == ROCPROFILER_CALLBACK_PHASE_UNLOAD)
         {
-            // flush the buffer to ensure that any lookups for the client kernel names for the code
-            // object are completed
             auto flush_status = rocprofiler_flush_buffer(g_trace_buffer);
             if(flush_status != ROCPROFILER_STATUS_ERROR_BUFFER_BUSY)
             {
@@ -142,11 +156,6 @@ void tool_code_object_callback(rocprofiler_callback_tracing_record_t record,
             std::lock_guard<std::mutex> lk(client_kernels_mutex);
             client_kernels.emplace(data->kernel_id, *data);
         }
-        else if(record.phase == ROCPROFILER_CALLBACK_PHASE_UNLOAD)
-        {
-            // do not erase just in case a buffer callback needs this
-            // client_kernels.erase(data->kernel_id);
-        }
     }
 
     (void)user_data;
@@ -154,9 +163,9 @@ void tool_code_object_callback(rocprofiler_callback_tracing_record_t record,
 }
 
 //
-// Buffer callback -- handles both tracing records and counter records.
-// Kernel dispatch handling adapted from api_buffered_tracing example.
-// Counter record handling adapted from device_profiling example.
+// Buffer callback -- handles both kernel dispatch records and counter records.
+// Sets g_first_dispatch on the first kernel dispatch, which unblocks the
+// sampling thread to start the counter context.
 //
 void tool_buffer_callback(rocprofiler_context_id_t,
                           rocprofiler_buffer_id_t,
@@ -172,7 +181,6 @@ void tool_buffer_callback(rocprofiler_context_id_t,
         if(header->category == ROCPROFILER_BUFFER_CATEGORY_TRACING
            && header->kind == ROCPROFILER_BUFFER_TRACING_KERNEL_DISPATCH)
         {
-            // Kernel dispatch record -- from api_buffered_tracing example
             auto* record = static_cast<rocprofiler_buffer_tracing_kernel_dispatch_record_t*>(
                 header->payload);
 
@@ -185,6 +193,9 @@ void tool_buffer_callback(rocprofiler_context_id_t,
                     kernel_name = it->second.kernel_name;
             }
 
+            // Signal that GPU init is complete -- safe to start PMC sampling
+            g_first_dispatch.store(true);
+
             std::lock_guard<std::mutex> lk(g_kernel_records_mutex);
             g_kernel_records.push_back({std::move(kernel_name),
                                         record->start_timestamp,
@@ -196,12 +207,11 @@ void tool_buffer_callback(rocprofiler_context_id_t,
         else if(header->category == ROCPROFILER_BUFFER_CATEGORY_COUNTERS
                 && header->kind == ROCPROFILER_COUNTER_RECORD_PROFILE_COUNTING_DISPATCH_HEADER)
         {
-            // skip dispatch headers (from device_profiling example)
+            // skip dispatch headers
         }
         else if(header->category == ROCPROFILER_BUFFER_CATEGORY_COUNTERS
                 && header->kind == ROCPROFILER_COUNTER_RECORD_VALUE)
         {
-            // Counter record -- from device_profiling example, extended with dimension decoding
             auto* record = static_cast<rocprofiler_counter_record_t*>(header->payload);
 
             rocprofiler_counter_id_t counter_id = {.handle = 0};
@@ -233,33 +243,21 @@ void tool_buffer_callback(rocprofiler_context_id_t,
 }
 
 //
-// Device counting: set_profile callback -- from device_profiling example
+// Device counting: set_profile callback
 //
 void set_profile(rocprofiler_context_id_t               context_id,
                  rocprofiler_agent_id_t                 agent,
                  rocprofiler_device_counting_agent_cb_t set_config,
                  void*)
 {
-    auto search_cache = [&]()
-    {
-        if(auto pos = g_profile_cache.find(agent.handle); pos != g_profile_cache.end())
-        {
-            set_config(context_id, pos->second);
-            return true;
-        }
-        return false;
-    };
-
-    if(!search_cache())
-    {
-        std::cerr << "No profile for agent found in cache\n";
-        exit(-1);
-    }
+    auto pos = g_profile_cache.find(agent.handle);
+    assert(pos != g_profile_cache.end());
+    set_config(context_id, pos->second);
 }
 
 //
-// Build counter profile for an agent -- from device_profiling example,
-// extended to read CHOPPER_COUNTERS env var and discover dimensions.
+// Build counter profile for an agent. Reads CHOPPER_COUNTERS env var
+// and discovers counter dimensions for CSV output.
 //
 rocprofiler_counter_config_id_t build_profile_for_agent(rocprofiler_agent_id_t agent)
 {
@@ -284,12 +282,9 @@ rocprofiler_counter_config_id_t build_profile_for_agent(rocprofiler_agent_id_t a
                             size_t                    num_counters,
                             void*                     user_data)
                          {
-                             std::vector<rocprofiler_counter_id_t>* vec
-                                 = static_cast<std::vector<rocprofiler_counter_id_t>*>(user_data);
+                             auto* vec = static_cast<std::vector<rocprofiler_counter_id_t>*>(user_data);
                              for(size_t i = 0; i < num_counters; i++)
-                             {
                                  vec->push_back(counters[i]);
-                             }
                              return ROCPROFILER_STATUS_SUCCESS;
                          },
                          static_cast<void*>(&gpu_counters)),
@@ -310,7 +305,6 @@ rocprofiler_counter_config_id_t build_profile_for_agent(rocprofiler_agent_id_t a
         }
     }
 
-    // Discover dimensions per counter using v1 info
     for(auto& counter : collect_counters)
     {
         rocprofiler_counter_info_v1_t info_v1;
@@ -348,7 +342,9 @@ rocprofiler_counter_config_id_t build_profile_for_agent(rocprofiler_agent_id_t a
 }
 
 //
-// tool_init -- combines setup from both examples into one context.
+// tool_init -- sets up two contexts:
+//   g_ctx:         dispatch tracing, started immediately
+//   g_counter_ctx: device counting, started after first kernel dispatch
 //
 int tool_init(rocprofiler_client_finalize_t, void*)
 {
@@ -357,9 +353,9 @@ int tool_init(rocprofiler_client_finalize_t, void*)
 
     std::clog << "[tool] Initializing with sample interval " << g_sample_interval_ms << " ms\n";
 
-    ROCPROFILER_CALL(rocprofiler_create_context(&g_ctx), "context creation failed");
+    // --- Context 1: dispatch tracing (safe to start immediately) ---
+    ROCPROFILER_CALL(rocprofiler_create_context(&g_ctx), "tracing context creation");
 
-    // Code object callback for kernel name resolution (from api_buffered_tracing)
     auto code_object_ops = std::vector<rocprofiler_tracing_operation_t>{
         ROCPROFILER_CODE_OBJECT_LOAD,
         ROCPROFILER_CODE_OBJECT_DEVICE_KERNEL_SYMBOL_REGISTER};
@@ -373,7 +369,6 @@ int tool_init(rocprofiler_client_finalize_t, void*)
                                                        nullptr),
         "code object tracing service configure");
 
-    // Trace buffer for kernel dispatch records
     ROCPROFILER_CALL(rocprofiler_create_buffer(g_ctx,
                                                16384,
                                                16384 - 2048,
@@ -383,7 +378,6 @@ int tool_init(rocprofiler_client_finalize_t, void*)
                                                &g_trace_buffer),
                      "trace buffer creation");
 
-    // Configure kernel dispatch tracing (from api_buffered_tracing)
     ROCPROFILER_CALL(
         rocprofiler_configure_buffer_tracing_service(g_ctx,
                                                      ROCPROFILER_BUFFER_TRACING_KERNEL_DISPATCH,
@@ -392,8 +386,16 @@ int tool_init(rocprofiler_client_finalize_t, void*)
                                                      g_trace_buffer),
         "buffer tracing service for kernel dispatch configure");
 
-    // Counter buffer for device counting records
-    ROCPROFILER_CALL(rocprofiler_create_buffer(g_ctx,
+    ROCPROFILER_CALL(rocprofiler_start_context(g_ctx), "start tracing context");
+
+    // --- Context 2: device counting (deferred start) ---
+    // Starting the device counting context configures PMC hardware on the GPU.
+    // If done during HSA or NCCL initialization, this causes a GPU hang.
+    // We defer this until the first kernel dispatch is observed, which
+    // guarantees that GPU init is complete.
+    ROCPROFILER_CALL(rocprofiler_create_context(&g_counter_ctx), "counter context creation");
+
+    ROCPROFILER_CALL(rocprofiler_create_buffer(g_counter_ctx,
                                                4096,
                                                2048,
                                                ROCPROFILER_BUFFER_POLICY_LOSSLESS,
@@ -402,7 +404,7 @@ int tool_init(rocprofiler_client_finalize_t, void*)
                                                &g_counter_buffer),
                      "counter buffer creation");
 
-    // Discover GPU agents and build counter profiles (from device_profiling)
+    // Discover GPU agents and select the one matching LOCAL_RANK
     std::vector<rocprofiler_agent_v0_t>     agents;
     rocprofiler_query_available_agents_cb_t iterate_cb = [](rocprofiler_agent_version_t agents_ver,
                                                             const void**                agents_arr,
@@ -410,14 +412,10 @@ int tool_init(rocprofiler_client_finalize_t, void*)
                                                             void*                       udata)
     {
         if(agents_ver != ROCPROFILER_AGENT_INFO_VERSION_0)
-        {
             throw std::runtime_error{"unexpected rocprofiler agent version"};
-        }
         auto* agents_v = static_cast<std::vector<rocprofiler_agent_v0_t>*>(udata);
         for(size_t i = 0; i < num_agents; ++i)
-        {
             agents_v->emplace_back(*static_cast<const rocprofiler_agent_v0_t*>(agents_arr[i]));
-        }
         return ROCPROFILER_STATUS_SUCCESS;
     };
 
@@ -428,8 +426,6 @@ int tool_init(rocprofiler_client_finalize_t, void*)
                                            const_cast<void*>(static_cast<const void*>(&agents))),
         "query available agents");
 
-    // Select the GPU agent matching LOCAL_RANK (for multi-rank torchrun).
-    // If LOCAL_RANK is not set, use the first GPU agent.
     int target_gpu_index = 0;
     if(auto* lr = std::getenv("LOCAL_RANK"); lr)
         target_gpu_index = std::atoi(lr);
@@ -458,15 +454,13 @@ int tool_init(rocprofiler_client_finalize_t, void*)
         return 1;
     }
 
-    // Configure device counting service (from device_profiling)
-    ROCPROFILER_CALL(rocprofiler_configure_device_counting_service(g_ctx,
+    ROCPROFILER_CALL(rocprofiler_configure_device_counting_service(g_counter_ctx,
                                                                    g_counter_buffer,
                                                                    target_agent,
                                                                    set_profile,
                                                                    nullptr),
                      "Could not setup device counting service");
 
-    // Create and assign callback thread for both buffers
     auto client_thread = rocprofiler_callback_thread_t{};
     ROCPROFILER_CALL(rocprofiler_create_callback_thread(&client_thread),
                      "failure creating callback thread");
@@ -475,26 +469,48 @@ int tool_init(rocprofiler_client_finalize_t, void*)
     ROCPROFILER_CALL(rocprofiler_assign_callback_thread(g_counter_buffer, client_thread),
                      "failed to assign thread for counter buffer");
 
-    // Sampling thread.
+    // --- Sampling thread ---
+    // Waits for g_first_dispatch (set by buffer callback when the first kernel
+    // dispatch record arrives), then starts the counter context and begins
+    // polling. For non-GPU processes, g_first_dispatch never fires and the
+    // thread exits cleanly when g_exit is set.
+    g_thread_started.store(true);
     std::thread(
         [=]()
         {
-            rocprofiler_start_context(g_ctx);
-            std::clog << "[tool] Context started, sampling active\n";
+            std::clog << "[tool] Waiting for first kernel dispatch...\n";
+            while(!g_exit.load() && !g_first_dispatch.load())
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            if(g_exit.load()) { g_exit.store(false); return; }
+
+            ROCPROFILER_CALL(rocprofiler_start_context(g_counter_ctx),
+                             "start counter context");
+            std::clog << "[tool] First dispatch seen, counter context started\n";
 
             uint64_t count = 0;
-            while(g_exit.load() == false)
+            while(!g_exit.load())
             {
                 rocprofiler_timestamp_t ts = 0;
                 rocprofiler_get_timestamp(&ts);
 
-                rocprofiler_sample_device_counting_service(g_ctx,
-                                                           {.value = ts},
-                                                           ROCPROFILER_COUNTER_FLAG_NONE,
-                                                           nullptr,
-                                                           nullptr);
-                count++;
-                std::this_thread::sleep_for(std::chrono::milliseconds(g_sample_interval_ms));
+                auto status = rocprofiler_sample_device_counting_service(
+                    g_counter_ctx,
+                    {.value = ts},
+                    ROCPROFILER_COUNTER_FLAG_NONE,
+                    nullptr,
+                    nullptr);
+
+                if(status == ROCPROFILER_STATUS_SUCCESS)
+                {
+                    count++;
+                    std::this_thread::sleep_for(
+                        std::chrono::milliseconds(g_sample_interval_ms));
+                }
+                else
+                {
+                    // Transient error (e.g., rocprofiler finalizing) -- back off
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                }
             }
             g_exit.store(false);
             std::clog << "[tool] Sampling thread exiting after " << count << " samples\n";
@@ -512,11 +528,18 @@ void tool_fini(void*)
 {
     std::clog << "[tool] Finalizing...\n";
 
+    if(!g_thread_started.load())
+    {
+        std::clog << "[tool] No sampling thread was started, skipping.\n";
+        return;
+    }
+
     g_exit.store(true);
     while(g_exit.load() == true)
     {};
 
     rocprofiler_stop_context(g_ctx);
+    rocprofiler_stop_context(g_counter_ctx);
     ROCPROFILER_CALL(rocprofiler_flush_buffer(g_trace_buffer), "trace buffer flush");
     ROCPROFILER_CALL(rocprofiler_flush_buffer(g_counter_buffer), "counter buffer flush");
 
@@ -603,7 +626,7 @@ void tool_fini(void*)
 } // namespace
 
 //
-// rocprofiler-sdk entry point -- from device_profiling example
+// rocprofiler-sdk entry point
 //
 extern "C" rocprofiler_tool_configure_result_t* rocprofiler_configure(uint32_t    version,
                                                                       const char* runtime_version,
@@ -616,11 +639,8 @@ extern "C" rocprofiler_tool_configure_result_t* rocprofiler_configure(uint32_t  
     uint32_t minor = (version % 10000) / 100;
     uint32_t patch = version % 100;
 
-    auto info = std::stringstream{};
-    info << id->name << " (priority=" << priority << ") is using rocprofiler-sdk v" << major << "."
-         << minor << "." << patch << " (" << runtime_version << ")";
-
-    std::clog << info.str() << std::endl;
+    std::clog << id->name << " (priority=" << priority << ") is using rocprofiler-sdk v"
+              << major << "." << minor << "." << patch << " (" << runtime_version << ")\n";
 
     static auto cfg
         = rocprofiler_tool_configure_result_t{sizeof(rocprofiler_tool_configure_result_t),
