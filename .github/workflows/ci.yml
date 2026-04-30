@@ -26,3 +26,12 @@ jobs:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
       - run: python -m mypy chopper --ignore-missing-imports
+
+  container-install:
+    runs-on: ubuntu-latest
+    container:
+      image: rocm/primus:v26.2
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install -e .
+      - run: python3 -c "import chopper; from loguru import logger; logger.info('container ok')"
