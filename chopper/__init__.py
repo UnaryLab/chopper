@@ -1,3 +1,14 @@
+"""
+# Chopper
+
+GPU characterization tool for analyzing multi-GPU performance during
+distributed deep learning workloads.
+
+This is Chopper:
+
+![Chopper](chopper.jpg)
+"""
+
 import sys
 from loguru import logger
 

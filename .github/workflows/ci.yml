@@ -26,6 +26,7 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: ruff check chopper/
       - run: pdoc chopper.common chopper.plots chopper.profile -o docs
+      - run: cp chopper.jpg docs/chopper/chopper.jpg
       - uses: actions/upload-pages-artifact@v3
         with:
           path: docs
