@@ -287,10 +287,10 @@ def get_slack_adv_df(
     kernel_name: bool = False,
     agg_meth: str = 'max',
 ):
-    """Compute slack advancement metrics for communication operations.
+    """Compute slack advantage metrics for communication operations.
 
-    Analyzes how much communication operations can be advanced (started earlier)
-    based on available slack in the computation schedule.
+    Analyzes the slack advantage of communication operations -- how much
+    idle time (slack) is available relative to computation.
 
     Args:
         fn: Path to trace pickle file
