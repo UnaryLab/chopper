@@ -5,7 +5,7 @@ build-backend = "scikit_build_core.build"
 [project]
 name = "chopper"
 version = "0.10"
-dependencies = ["pandas", "numpy", "matplotlib", "mypy", "PyQt6", "loguru"]
+dependencies = ["pandas", "numpy", "matplotlib", "mypy", "PyQt6", "loguru", "scipy", "psutil"]
 
 [project.optional-dependencies]
 dev = ["pdoc", "mypy", "ruff"]
