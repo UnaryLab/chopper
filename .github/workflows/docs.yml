@@ -22,7 +22,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pandas numpy matplotlib loguru ijson pdoc
-      - run: pdoc chopper.common chopper.plots chopper.profile -o docs --no-show-source
+      - run: PYTHONPATH=$PWD pdoc chopper.common chopper.plots chopper.profile -o docs --no-show-source
       - uses: actions/upload-pages-artifact@v3
         with:
           path: docs
