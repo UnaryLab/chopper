@@ -35,7 +35,7 @@ def _get_lib_path() -> str:
     import importlib.util
     spec = importlib.util.find_spec("chopper.profile.telemetry")
     assert spec is not None and spec.origin is not None, (
-        f"Cannot find chopper.profile.telemetry package"
+        "Cannot find chopper.profile.telemetry package"
     )
     installed_lib = pathlib.Path(spec.origin).parent / "lib" / LIB_NAME
     assert installed_lib.is_file(), (

@@ -176,7 +176,7 @@ def main():
         gemm_only = zoom.iloc[gemm_active & ~nccl_active]['mfma_util']
         gemm_nccl = zoom.iloc[gemm_active & nccl_active]['mfma_util']
 
-        print(f"\nMFMA util during GEMM kernels:")
+        print("\nMFMA util during GEMM kernels:")
         print(f"  GEMM only:     n={len(gemm_only):4d}  "
               f"mean={gemm_only.mean():.1f}%  median={gemm_only.median():.1f}%")
         print(f"  GEMM + NCCL:   n={len(gemm_nccl):4d}  "

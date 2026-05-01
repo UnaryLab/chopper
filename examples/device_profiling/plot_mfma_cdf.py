@@ -100,7 +100,7 @@ def main():
         plt.show()
 
     # Summary
-    print(f"\nMFMA util during GEMM kernels:")
+    print("\nMFMA util during GEMM kernels:")
     if len(gemm_only_util):
         print(f"  GEMM only:   median={np.median(gemm_only_util):.1f}%  "
               f"mean={np.mean(gemm_only_util):.1f}%")

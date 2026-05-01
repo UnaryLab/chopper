@@ -128,7 +128,7 @@ def main():
         plt.show()
 
     # Stats
-    print(f"\nGEMM kernel MFMA util:")
+    print("\nGEMM kernel MFMA util:")
     print(f"  Solo:       n={len(gemm_solo):5d}  "
           f"median={gemm_solo['mfma_util'].median():.1f}%  "
           f"mean={gemm_solo['mfma_util'].mean():.1f}%")

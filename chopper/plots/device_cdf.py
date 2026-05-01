@@ -10,7 +10,6 @@ then plots the CDF of MFMA utilization for each group.
 
 import pickle
 import numpy as np
-import pandas as pd
 from loguru import logger
 from matplotlib.figure import Figure
 

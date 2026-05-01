@@ -477,7 +477,7 @@ def merge_device_with_traces(device_dir, trace_pkl, output):
             ts_gpu = ts_by_gpu[gpu]
             ts_names = set(ts_gpu["name"])
             rt_names = set(kernel_rows["name"])
-            shared = ts_names & rt_names
+            ts_names & rt_names
             rt_only = rt_names - ts_names
             if rt_only:
                 logger.warning(f"  Group {gi}, GPU {gpu}: {len(rt_only)} kernels not in ts.pkl")

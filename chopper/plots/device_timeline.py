@@ -10,7 +10,6 @@ uses the group that collected the requested metric.
 import pickle
 import re
 import numpy as np
-import pandas as pd
 from loguru import logger
 from matplotlib.figure import Figure
 
