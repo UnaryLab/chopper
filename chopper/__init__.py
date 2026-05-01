@@ -17,5 +17,5 @@ from loguru import logger
 logger.remove()
 logger.add(
     sys.stderr,
-    format="\U0001f415 <level>{level:<8}</level> | {time:HH:mm:ss} | {message}",
+    format="\U0001F43B\u200D\u2744\uFE0F <level>{level:<8}</level> | {time:HH:mm:ss} | {message}",
 )

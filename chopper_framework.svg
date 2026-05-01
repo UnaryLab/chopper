@@ -1,0 +1,175 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 360" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#555"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="700" height="360" fill="#fff"/>
+
+  <!-- ===== Left: GPU stack ===== -->
+  <!-- Stacked GPU boxes (offset shadows to show depth) -->
+  <rect x="28" y="58" width="100" height="260" rx="4" fill="#c8d6e5" stroke="#8395a7"/>
+  <rect x="22" y="52" width="100" height="260" rx="4" fill="#dfe6e9" stroke="#8395a7"/>
+  <rect x="16" y="46" width="100" height="260" rx="4" fill="#fff" stroke="#3498db" stroke-width="1.5"/>
+
+  <!-- GPU label -->
+  <text x="66" y="72" text-anchor="middle" font-size="13" font-weight="bold" fill="#2c3e50">GPU 0</text>
+  <text x="66" y="88" text-anchor="middle" font-size="9" fill="#7f8c8d">..N-1</text>
+
+  <!-- Inside GPU: what is collected per-GPU -->
+  <rect x="26" y="100" width="80" height="22" rx="3" fill="#e8f6f3" stroke="#1abc9c"/>
+  <text x="66" y="115" text-anchor="middle" font-size="8" fill="#16a085">Kernel Traces</text>
+
+  <rect x="26" y="130" width="80" height="22" rx="3" fill="#eaf2f8" stroke="#3498db"/>
+  <text x="66" y="145" text-anchor="middle" font-size="8" fill="#2980b9">PMC Counters</text>
+
+  <rect x="26" y="160" width="80" height="22" rx="3" fill="#fef9e7" stroke="#f1c40f"/>
+  <text x="66" y="175" text-anchor="middle" font-size="8" fill="#b7950b">CPU Telemetry</text>
+
+  <rect x="26" y="190" width="80" height="22" rx="3" fill="#fdedec" stroke="#e74c3c"/>
+  <text x="66" y="205" text-anchor="middle" font-size="8" fill="#c0392b">GPU Telemetry</text>
+
+  <!-- Magnify arrow -->
+  <line x1="120" y1="176" x2="155" y2="176" stroke="#555" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ===== Middle-right: Pipeline ===== -->
+
+  <!-- Stage 1: Collection -->
+  <rect x="160" y="20" width="160" height="145" rx="5" fill="#f7f9fb" stroke="#d0d7de"/>
+  <rect x="160" y="20" width="160" height="26" rx="5" fill="#2c3e50"/>
+  <rect x="160" y="42" width="160" height="4" fill="#2c3e50"/>
+  <text x="240" y="38" text-anchor="middle" font-size="11" font-weight="bold" fill="#fff">1. Collection</text>
+
+  <rect x="172" y="54" width="136" height="24" rx="3" fill="#ecf0f1" stroke="#bdc3c7"/>
+  <text x="240" y="70" text-anchor="middle" font-size="9" font-weight="bold" fill="#2c3e50">Training Workload</text>
+
+  <rect x="172" y="86" width="64" height="28" rx="3" fill="#e8f6f3" stroke="#1abc9c"/>
+  <text x="204" y="104" text-anchor="middle" font-size="8" font-weight="bold" fill="#16a085">Tracing</text>
+
+  <rect x="244" y="86" width="64" height="28" rx="3" fill="#eaf2f8" stroke="#3498db"/>
+  <text x="276" y="104" text-anchor="middle" font-size="8" font-weight="bold" fill="#2980b9">Sampling</text>
+
+  <rect x="172" y="122" width="64" height="28" rx="3" fill="#fef9e7" stroke="#f1c40f"/>
+  <text x="204" y="140" text-anchor="middle" font-size="8" font-weight="bold" fill="#b7950b">CPU Tel.</text>
+
+  <rect x="244" y="122" width="64" height="28" rx="3" fill="#fdedec" stroke="#e74c3c"/>
+  <text x="276" y="140" text-anchor="middle" font-size="8" font-weight="bold" fill="#c0392b">GPU Tel.</text>
+
+  <!-- Arrow down -->
+  <line x1="240" y1="165" x2="240" y2="188" stroke="#555" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Stage 2: Merge -->
+  <rect x="160" y="192" width="160" height="145" rx="5" fill="#f7f9fb" stroke="#d0d7de"/>
+  <rect x="160" y="192" width="160" height="26" rx="5" fill="#2c3e50"/>
+  <rect x="160" y="214" width="160" height="4" fill="#2c3e50"/>
+  <text x="240" y="210" text-anchor="middle" font-size="11" font-weight="bold" fill="#fff">2. Merge</text>
+
+  <rect x="172" y="226" width="136" height="28" rx="3" fill="#e8f6f3" stroke="#1abc9c"/>
+  <text x="240" y="244" text-anchor="middle" font-size="8" font-weight="bold" fill="#16a085">Trace Correlation</text>
+
+  <rect x="172" y="262" width="136" height="28" rx="3" fill="#eaf2f8" stroke="#3498db"/>
+  <text x="240" y="280" text-anchor="middle" font-size="8" font-weight="bold" fill="#2980b9">Counter Integration</text>
+
+  <rect x="172" y="298" width="136" height="28" rx="3" fill="#f4ecf7" stroke="#8e44ad"/>
+  <text x="240" y="316" text-anchor="middle" font-size="8" font-weight="bold" fill="#8e44ad">Time-Series Assembly</text>
+
+  <!-- Arrow right from Merge to Analysis -->
+  <line x1="320" y1="264" x2="358" y2="176" stroke="#555" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Stage 3: Analysis & Visualization -->
+  <rect x="360" y="20" width="320" height="316" rx="5" fill="#f7f9fb" stroke="#d0d7de"/>
+  <rect x="360" y="20" width="320" height="26" rx="5" fill="#2c3e50"/>
+  <rect x="360" y="42" width="320" height="4" fill="#2c3e50"/>
+  <text x="520" y="38" text-anchor="middle" font-size="11" font-weight="bold" fill="#fff">3. Analysis &amp; Visualization</text>
+
+  <!-- Metric Derivation -->
+  <rect x="375" y="54" width="290" height="34" rx="3" fill="#fef9e7" stroke="#f39c12"/>
+  <text x="520" y="72" text-anchor="middle" font-size="9" font-weight="bold" fill="#b7950b">Metric Derivation</text>
+  <text x="520" y="83" text-anchor="middle" font-size="7.5" fill="#b7950b">Compute utilization, bandwidth, cache rates from raw counters</text>
+
+  <!-- Analysis row -->
+  <rect x="375" y="96" width="90" height="32" rx="3" fill="#fadbd8" stroke="#e74c3c"/>
+  <text x="420" y="116" text-anchor="middle" font-size="9" font-weight="bold" fill="#c0392b">Straggler</text>
+
+  <rect x="475" y="96" width="90" height="32" rx="3" fill="#d4efdf" stroke="#27ae60"/>
+  <text x="520" y="116" text-anchor="middle" font-size="9" font-weight="bold" fill="#27ae60">Overlap</text>
+
+  <rect x="575" y="96" width="90" height="32" rx="3" fill="#f4ecf7" stroke="#8e44ad"/>
+  <text x="620" y="116" text-anchor="middle" font-size="9" font-weight="bold" fill="#8e44ad">Breakdown</text>
+
+  <!-- Visualization: small plot mockups -->
+  <rect x="375" y="140" width="140" height="86" rx="3" fill="#fff" stroke="#bdc3c7"/>
+  <text x="445" y="155" text-anchor="middle" font-size="8" font-weight="bold" fill="#555">Timeline</text>
+  <!-- Mini timeline bars -->
+  <rect x="385" y="162" width="50" height="4" rx="1" fill="#3498db" opacity="0.6"/>
+  <rect x="440" y="162" width="30" height="4" rx="1" fill="#e67e22" opacity="0.6"/>
+  <rect x="385" y="170" width="45" height="4" rx="1" fill="#3498db" opacity="0.6"/>
+  <rect x="435" y="170" width="35" height="4" rx="1" fill="#e67e22" opacity="0.6"/>
+  <rect x="385" y="178" width="55" height="4" rx="1" fill="#3498db" opacity="0.6"/>
+  <rect x="445" y="178" width="25" height="4" rx="1" fill="#e67e22" opacity="0.6"/>
+  <rect x="385" y="186" width="40" height="4" rx="1" fill="#3498db" opacity="0.6"/>
+  <rect x="430" y="186" width="40" height="4" rx="1" fill="#e67e22" opacity="0.6"/>
+  <!-- Mini line -->
+  <polyline points="385,210 400,195 415,205 430,190 445,200 460,192 475,198 490,188 505,195" fill="none" stroke="#2980b9" stroke-width="1"/>
+
+  <rect x="525" y="140" width="140" height="86" rx="3" fill="#fff" stroke="#bdc3c7"/>
+  <text x="595" y="155" text-anchor="middle" font-size="8" font-weight="bold" fill="#555">CDF</text>
+  <!-- Mini CDF curve -->
+  <polyline points="535,218 545,218 555,216 565,212 575,205 585,195 600,180 615,168 630,162 645,160 655,160" fill="none" stroke="#e74c3c" stroke-width="1.2"/>
+  <polyline points="535,218 548,217 560,214 570,208 580,198 590,185 605,172 620,165 640,162 655,160" fill="none" stroke="#3498db" stroke-width="1.2" stroke-dasharray="3,2"/>
+
+  <!-- Heatmap mockup -->
+  <rect x="375" y="234" width="140" height="86" rx="3" fill="#fff" stroke="#bdc3c7"/>
+  <text x="445" y="249" text-anchor="middle" font-size="8" font-weight="bold" fill="#555">Heatmap</text>
+  <!-- Mini heatmap grid -->
+  <g opacity="0.7">
+    <rect x="390" y="256" width="14" height="10" fill="#3498db" opacity="0.3"/>
+    <rect x="406" y="256" width="14" height="10" fill="#3498db" opacity="0.6"/>
+    <rect x="422" y="256" width="14" height="10" fill="#3498db" opacity="0.9"/>
+    <rect x="438" y="256" width="14" height="10" fill="#e74c3c" opacity="0.4"/>
+    <rect x="454" y="256" width="14" height="10" fill="#e74c3c" opacity="0.7"/>
+    <rect x="470" y="256" width="14" height="10" fill="#3498db" opacity="0.5"/>
+    <rect x="486" y="256" width="14" height="10" fill="#3498db" opacity="0.2"/>
+
+    <rect x="390" y="268" width="14" height="10" fill="#3498db" opacity="0.5"/>
+    <rect x="406" y="268" width="14" height="10" fill="#3498db" opacity="0.8"/>
+    <rect x="422" y="268" width="14" height="10" fill="#e74c3c" opacity="0.3"/>
+    <rect x="438" y="268" width="14" height="10" fill="#e74c3c" opacity="0.6"/>
+    <rect x="454" y="268" width="14" height="10" fill="#3498db" opacity="0.4"/>
+    <rect x="470" y="268" width="14" height="10" fill="#3498db" opacity="0.7"/>
+    <rect x="486" y="268" width="14" height="10" fill="#3498db" opacity="0.3"/>
+
+    <rect x="390" y="280" width="14" height="10" fill="#e74c3c" opacity="0.2"/>
+    <rect x="406" y="280" width="14" height="10" fill="#3498db" opacity="0.4"/>
+    <rect x="422" y="280" width="14" height="10" fill="#3498db" opacity="0.7"/>
+    <rect x="438" y="280" width="14" height="10" fill="#3498db" opacity="0.9"/>
+    <rect x="454" y="280" width="14" height="10" fill="#e74c3c" opacity="0.5"/>
+    <rect x="470" y="280" width="14" height="10" fill="#3498db" opacity="0.6"/>
+    <rect x="486" y="280" width="14" height="10" fill="#3498db" opacity="0.4"/>
+
+    <rect x="390" y="292" width="14" height="10" fill="#3498db" opacity="0.7"/>
+    <rect x="406" y="292" width="14" height="10" fill="#3498db" opacity="0.3"/>
+    <rect x="422" y="292" width="14" height="10" fill="#e74c3c" opacity="0.5"/>
+    <rect x="438" y="292" width="14" height="10" fill="#3498db" opacity="0.4"/>
+    <rect x="454" y="292" width="14" height="10" fill="#3498db" opacity="0.8"/>
+    <rect x="470" y="292" width="14" height="10" fill="#e74c3c" opacity="0.3"/>
+    <rect x="486" y="292" width="14" height="10" fill="#3498db" opacity="0.6"/>
+  </g>
+
+  <!-- Breakdown bar chart mockup -->
+  <rect x="525" y="234" width="140" height="86" rx="3" fill="#fff" stroke="#bdc3c7"/>
+  <text x="595" y="249" text-anchor="middle" font-size="8" font-weight="bold" fill="#555">Breakdown</text>
+  <!-- Mini stacked bars -->
+  <rect x="545" y="264" width="30" height="48" rx="1" fill="#3498db" opacity="0.7"/>
+  <rect x="545" y="286" width="30" height="26" rx="1" fill="#e67e22" opacity="0.7"/>
+  <rect x="585" y="268" width="30" height="44" rx="1" fill="#3498db" opacity="0.7"/>
+  <rect x="585" y="290" width="30" height="22" rx="1" fill="#e67e22" opacity="0.7"/>
+  <rect x="625" y="272" width="30" height="40" rx="1" fill="#3498db" opacity="0.7"/>
+  <rect x="625" y="294" width="30" height="18" rx="1" fill="#e67e22" opacity="0.7"/>
+
+  <!-- Interactive Explorer at bottom -->
+  <rect x="375" y="328" width="290" height="24" rx="3" fill="#d6eaf8" stroke="#2980b9" stroke-width="1.5"/>
+  <text x="520" y="344" text-anchor="middle" font-size="9" font-weight="bold" fill="#2980b9">Interactive Explorer</text>
+</svg>

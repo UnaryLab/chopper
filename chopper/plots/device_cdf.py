@@ -1,7 +1,7 @@
 """MFMA utilization CDF: GEMM-only vs overlapped with NCCL.
 
-Reads a device_ts.pkl produced by:
-  python -m chopper.profile.merge --device-dir <dir> -o device_ts.pkl
+Reads a device_merged.pkl produced by:
+  python -m chopper.profile.merge --device-dir <dir> -p ts.pkl -o device_merged.pkl
 
 Classifies each 1ms sample interval during GEMM kernel execution as
 solo (no concurrent NCCL) or overlapped (NCCL running simultaneously),
@@ -17,69 +17,50 @@ from matplotlib.figure import Figure
 from chopper.common.rocm_metrics import derive_tensor_util_rocm
 
 
-def _prepare(data, target_gpu):
-    """Sum, pivot, diff, derive MFMA util for one GPU."""
-    dfs = []
-    for (gi, rank), df in data["counter_samples"].items():
-        if rank == target_gpu:
-            dfs.append(df)
-    assert dfs, f"No counter samples for GPU {target_gpu}"
-    counters = pd.concat(dfs, ignore_index=True)
-
-    totals = counters.groupby(
-        ["timestamp_ns", "counter_name"]
-    )["counter_value"].sum().reset_index()
-    piv = totals.pivot(
-        index="timestamp_ns", columns="counter_name", values="counter_value"
-    ).reset_index()
-    piv.columns.name = None
-    piv = piv.sort_values("timestamp_ns").reset_index(drop=True)
-
-    for col in [c for c in piv.columns if c != "timestamp_ns"]:
-        piv[col] = piv[col].diff()
-    piv = piv.iloc[1:]
-
-    derive_tensor_util_rocm(piv)
-    piv.rename(columns={"Tensor Util": "mfma_util"}, inplace=True)
-
-    # Kernel traces from the group that collected MFMA counters
-    counter_to_group = data["counter_to_group"]
-    group = counter_to_group.get("SQ_VALU_MFMA_BUSY_CYCLES", 0)
-    key = (group, target_gpu)
-    assert key in data["kernel_traces"], f"No kernel traces for group={group}, rank={target_gpu}"
-    kernels = data["kernel_traces"][key].copy()
-
-    kernels["type"] = "other"
-    kernels.loc[kernels["kernel_name"].str.contains("Cijk", na=False), "type"] = "gemm"
-    kernels.loc[kernels["kernel_name"].str.contains("nccl", na=False, case=False), "type"] = "nccl"
-
-    return piv, kernels
-
-
 def get_data(
-    device_files: list[str] = ["./device_ts.pkl"],
+    device_files: list[str] = ["./device_merged.pkl"],
     target_gpu: int = 0,
 ):
     with open(device_files[0], "rb") as f:
         data = pickle.load(f)
 
-    samples, kernels = _prepare(data, target_gpu)
+    # Find group with MFMA counters
+    c2g = data["counter_to_group"]
+    assert "SQ_VALU_MFMA_BUSY_CYCLES" in c2g, "No MFMA counters collected"
+    gi = c2g["SQ_VALU_MFMA_BUSY_CYCLES"]
+    group = data["groups"][gi]
 
-    ts = samples["timestamp_ns"].values
-    gemm = kernels[kernels["type"] == "gemm"]
-    nccl = kernels[kernels["type"] == "nccl"]
+    samples = group["samples"]
+    kernels = group["kernels"]
 
-    gemm_active = np.zeros(len(samples), dtype=bool)
-    nccl_active = np.zeros(len(samples), dtype=bool)
+    gpu_samples = samples[samples["gpu"] == target_gpu].copy()
+    gpu_samples = gpu_samples.sort_values("timestamp_ns").reset_index(drop=True)
+    gpu_kernels = kernels[kernels["gpu"] == target_gpu].copy()
+
+    # Derive MFMA util
+    derive_tensor_util_rocm(gpu_samples)
+    gpu_samples.rename(columns={"Tensor Util": "mfma_util"}, inplace=True)
+
+    # Classify kernels
+    gpu_kernels["type"] = "other"
+    gpu_kernels.loc[gpu_kernels["name"].str.contains("Cijk", na=False), "type"] = "gemm"
+    gpu_kernels.loc[gpu_kernels["name"].str.contains("nccl", na=False, case=False), "type"] = "nccl"
+
+    gemm = gpu_kernels[gpu_kernels["type"] == "gemm"]
+    nccl = gpu_kernels[gpu_kernels["type"] == "nccl"]
+
+    ts = gpu_samples["timestamp_ns"].values
+    gemm_active = np.zeros(len(gpu_samples), dtype=bool)
+    nccl_active = np.zeros(len(gpu_samples), dtype=bool)
 
     for _, row in gemm.iterrows():
-        gemm_active |= (ts >= row["start_ns"]) & (ts <= row["end_ns"])
+        gemm_active |= (ts >= row["ts"]) & (ts <= row["ts"] + row["dur"])
     for _, row in nccl.iterrows():
-        nccl_active |= (ts >= row["start_ns"]) & (ts <= row["end_ns"])
+        nccl_active |= (ts >= row["ts"]) & (ts <= row["ts"] + row["dur"])
 
     return {
-        "gemm_only": samples.loc[gemm_active & ~nccl_active, "mfma_util"].values,
-        "gemm_nccl": samples.loc[gemm_active & nccl_active, "mfma_util"].values,
+        "gemm_only": gpu_samples.loc[gemm_active & ~nccl_active, "mfma_util"].values,
+        "gemm_nccl": gpu_samples.loc[gemm_active & nccl_active, "mfma_util"].values,
     }
 
 
@@ -123,7 +104,7 @@ def draw(
 
 
 def main(
-    device_files: list[str] = ["./device_ts.pkl"],
+    device_files: list[str] = ["./device_merged.pkl"],
     target_gpu: int = 0,
     figsize: tuple[float, float] = (10, 6),
     filename: str = "device_cdf.png",

@@ -66,6 +66,35 @@ def agg(
     return df_summed
 
 
+def _load_device_kernels(path):
+    """Load kernel DataFrame from a device_merged.pkl.
+
+    Uses group 0's kernel trace (which has ts.pkl annotations).
+    """
+    import pickle
+    with open(path, "rb") as f:
+        data = pickle.load(f)
+    assert "groups" in data, f"{path} is not a device_merged.pkl"
+    return data["groups"][0]["kernels"]
+
+
+def _derive_gap_overhead(df):
+    """Compute total inter-kernel gap when ts_cuda_runtime is unavailable.
+
+    Returns DataFrame with 'Launch Overhead' column (ms) -- the positive
+    gap between previous kernel end and current kernel start.
+    """
+    grp = ['gpu', 'iteration']
+    df = df.sort_values(grp + ['ts']).reset_index(drop=True)
+
+    prev_end = (df.groupby(grp)['ts'].shift(1) +
+                df.groupby(grp)['dur'].shift(1))
+    df['Launch Overhead'] = np.maximum(0, df['ts'] - prev_end).astype(float) * 1e-6
+    df.loc[df.groupby(grp).head(1).index, 'Launch Overhead'] = 0
+
+    return df
+
+
 def get_data(
     ts_files: list[str] = ["./ts.pkl"],
     configs: list[str] = ["default"],
@@ -76,6 +105,9 @@ def get_data(
     kernels on the same GPU within the same iteration), then sums across
     layers per operator. Normalizes to the maximum overhead across configs.
 
+    Supports both ts.pkl (with Prep+Call split) and device_merged.pkl
+    (total inter-kernel gap only).
+
     Args:
         ts_files: List of paths to trace pickle files
         configs: Config labels (e.g. "b1s4", "b2s8")
@@ -83,20 +115,30 @@ def get_data(
     Returns:
         Dict mapping config names to processed DataFrames with normalized overhead metrics
     """
-    raw = {
-        config: load_pickle(ts_file)
-        for ts_file, config in zip(ts_files, configs)
-    }
+    raw = {}
+    for ts_file, config in zip(ts_files, configs):
+        loaded = load_pickle(ts_file)
+        if isinstance(loaded, dict) and "groups" in loaded:
+            raw[config] = _load_device_kernels(ts_file)
+        else:
+            raw[config] = loaded
 
-    metrics = ("Prep Overhead", "Call Overhead")
     data = {}
     for setup, df in raw.items():
+        has_cuda_ts = "ts_cuda_runtime" in df.columns
+
+        if has_cuda_ts:
+            metrics = ("Prep Overhead", "Call Overhead")
+        else:
+            metrics = ("Launch Overhead",)
+
         df["layer"] = df["layer"].fillna(-1)
         weird_mask = df["iteration"].isna()
         if weird_mask.any():
-            assert df[~weird_mask]["ts"].min() > df[weird_mask]["ts"].max(), (
-                "NaN iteration isn't at the start"
-            )
+            if has_cuda_ts:
+                assert df[~weird_mask]["ts"].min() > df[weird_mask]["ts"].max(), (
+                    "NaN iteration isn't at the start"
+                )
             df = df[~weird_mask]
 
         df = df[df["name"] != "Memcpy HtoD (Host -> Device)"]
@@ -110,9 +152,11 @@ def get_data(
         overlap_mask = no_overlap_mask(df)
         df = df[overlap_mask].copy()
 
-        # Per-kernel overhead grouped by (gpu, iteration)
-        df = derive_prep_overhead(df)
-        df = derive_call_overhead(df)
+        if has_cuda_ts:
+            df = derive_prep_overhead(df)
+            df = derive_call_overhead(df)
+        else:
+            df = _derive_gap_overhead(df)
 
         # For the first compute kernel per iteration, override with gap
         # from the iteration's first kernel (including comm)
@@ -121,8 +165,11 @@ def get_data(
             row = df.loc[idx]
             start_ts = iter_start.loc[(row["gpu"], row["iteration"])]
             gap = max(0, row["ts"] - start_ts) * 1e-6
-            df.loc[idx, "Prep Overhead"] = gap
-            df.loc[idx, "Call Overhead"] = 0
+            if "Prep Overhead" in df.columns:
+                df.loc[idx, "Prep Overhead"] = gap
+                df.loc[idx, "Call Overhead"] = 0
+            else:
+                df.loc[idx, "Launch Overhead"] = gap
 
         # Sum across layers per (gpu, iteration, operator-name)
         agg_df = (
@@ -178,25 +225,34 @@ def draw(
 
     params = list(data.keys())
 
-    metrics = (
-        "Prep Overhead",
-        "Call Overhead",
-    )
+    # Collect all metrics across configs
+    all_metrics = set()
+    for df in data.values():
+        for m in ("Prep Overhead", "Call Overhead", "Launch Overhead"):
+            if m in df.columns:
+                all_metrics.add(m)
+    if "Prep Overhead" in all_metrics:
+        metrics = ("Prep Overhead", "Call Overhead")
+    else:
+        metrics = ("Launch Overhead",)
 
-    # Sort operators by total overhead (descending)
+    # Sort operators by total overhead (descending) using first config
     first_setup = next(iter(data.values())).set_index("operator-name")
-    ops = sorted(ops, key=lambda op: sum(first_setup.loc[op, m] for m in metrics), reverse=True)
+    first_metrics = [m for m in ("Prep Overhead", "Call Overhead", "Launch Overhead") if m in first_setup.columns]
+    ops = sorted(ops, key=lambda op: sum(first_setup.loc[op, m] for m in first_metrics), reverse=True)
 
     bar_color = {m: rgb_colors[i] for i, m in enumerate(metrics)}
+    bar_color["Launch Overhead"] = rgb(0x8D, 0xA0, 0xCB)
 
     # Compute normalization factors per side
     def _max_total(op_list):
         mx = 0
         for setup in params:
             op_df = data[setup].set_index("operator-name")
+            setup_metrics = [m for m in ("Prep Overhead", "Call Overhead", "Launch Overhead") if m in op_df.columns]
             for op in op_list:
                 assert op in op_df.index, f"operator {op} not in {setup}"
-                mx = max(mx, sum(op_df.loc[op, m] for m in metrics))
+                mx = max(mx, sum(op_df.loc[op, m] for m in setup_metrics))
         return mx
 
     lnorm = _max_total(lops) if two_axes else _max_total(ops)
@@ -279,21 +335,30 @@ def draw(
 
             ax.set_title(op, pad=5, fontsize=8)
 
-            call_val = row["Call Overhead"] / norm
-            prep_val = row["Prep Overhead"] / norm
-
-            ax.bar(
-                tick, call_val,
-                width=bar_width * 0.9, bottom=bottom,
-                color=bar_color["Call Overhead"], alpha=0.99,
-            )
-            bottom += call_val
-
-            ax.bar(
-                tick, prep_val,
-                width=bar_width * 0.9, bottom=bottom,
-                color=bar_color["Prep Overhead"], alpha=0.99,
-            )
+            if "Prep Overhead" in op_df.columns:
+                # Has Prep+Call split
+                call_val = row["Call Overhead"] / norm
+                prep_val = row["Prep Overhead"] / norm
+                ax.bar(
+                    tick, call_val,
+                    width=bar_width * 0.9, bottom=bottom,
+                    color=bar_color["Call Overhead"], alpha=0.99,
+                )
+                bottom += call_val
+                ax.bar(
+                    tick, prep_val,
+                    width=bar_width * 0.9, bottom=bottom,
+                    color=bar_color["Prep Overhead"], alpha=0.99,
+                )
+            else:
+                # Launch Overhead only (device profiling)
+                val = row["Launch Overhead"] / norm
+                ax.bar(
+                    tick, val,
+                    width=bar_width * 0.9, bottom=bottom,
+                    color=bar_color.get("Launch Overhead", bar_color["Prep Overhead"]),
+                    alpha=0.99,
+                )
 
     # Sync ylims
     if two_axes:

@@ -51,11 +51,15 @@ def main(program,
             sample_ms,
         )
     else:
+        # rocprofv3 dispatch counters expect a flat list
+        flat_counters = None
+        if counter_names is not None:
+            flat_counters = [c for group in counter_names for c in group]
         runner.add(
             counters.main,
             True,
             program,
-            counter_names,
+            flat_counters,
             outdir,
             container,
             nvidia,
@@ -71,8 +75,10 @@ if __name__ == "__main__":
     parser.add_argument(
         '--counters',
         nargs='+',
+        action='append',
         required=False,
-        help='Name of hardware counters to collect'
+        help='Hardware counters to collect. Use once for auto-grouping by 4, '
+             'or repeat for explicit groups: --counters A B C --counters D E'
     )
     parser.add_argument(
         '--nvidia',

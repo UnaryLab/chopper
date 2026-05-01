@@ -31,6 +31,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <cxxabi.h>
 #include <fstream>
 #include <iostream>
 #include <mutex>
@@ -55,6 +56,23 @@
 
 namespace
 {
+
+// Demangle a kernel name, stripping the .kd suffix first.
+// Same approach as rocprofiler-sdk's code_object_tracing sample.
+std::string
+demangle_kernel_name(const char* name)
+{
+    auto mangled = std::string{name};
+    // Strip .kd suffix
+    if(mangled.size() > 3 && mangled.substr(mangled.size() - 3) == ".kd")
+        mangled = mangled.substr(0, mangled.size() - 3);
+
+    int   status     = 0;
+    char* demangled   = abi::__cxa_demangle(mangled.c_str(), nullptr, nullptr, &status);
+    auto  result      = (status == 0 && demangled) ? std::string{demangled} : mangled;
+    ::free(demangled);
+    return result;
+}
 
 //
 // Kernel symbol tracking (from api_buffered_tracing example)
@@ -190,7 +208,7 @@ void tool_buffer_callback(rocprofiler_context_id_t,
                 std::lock_guard<std::mutex> lk(client_kernels_mutex);
                 auto it = client_kernels.find(kernel_id);
                 if(it != client_kernels.end())
-                    kernel_name = it->second.kernel_name;
+                    kernel_name = demangle_kernel_name(it->second.kernel_name);
             }
 
             // Signal that GPU init is complete -- safe to start PMC sampling
@@ -505,18 +523,12 @@ int tool_init(rocprofiler_client_finalize_t, void*)
                     ROCPROFILER_COUNTER_FLAG_NONE,
                     nullptr,
                     nullptr);
-
-                if(status == ROCPROFILER_STATUS_SUCCESS)
-                {
-                    count++;
-                    std::this_thread::sleep_for(
-                        std::chrono::milliseconds(g_sample_interval_ms));
-                }
-                else
-                {
-                    // Transient error (e.g., rocprofiler finalizing) -- back off
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                }
+                if(status != ROCPROFILER_STATUS_SUCCESS)
+                    std::cerr << "[tool] WARNING: sample failed at ts=" << ts
+                              << " status=" << status << "\n";
+                count++;
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(g_sample_interval_ms));
             }
             g_exit.store(false);
             std::clog << "[tool] Sampling thread exiting after " << count << " samples\n";

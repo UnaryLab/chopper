@@ -358,6 +358,175 @@ def merge_counters(df_ts, counter_batches):
     return df_result
 
 
+def _prepare_device_samples(counter_df):
+    """Sum across HW dims, pivot wide, diff to get per-interval deltas.
+
+    Returns (pivoted DataFrame with delta columns + timestamp_ns, half_dt_ns).
+    """
+    totals = counter_df.groupby(
+        ["timestamp_ns", "counter_name"]
+    )["counter_value"].sum().reset_index()
+
+    piv = totals.pivot(
+        index="timestamp_ns", columns="counter_name", values="counter_value"
+    ).reset_index()
+    piv.columns.name = None
+    piv = piv.sort_values("timestamp_ns").reset_index(drop=True)
+
+    # Diff: cumulative -> per-interval
+    for col in [c for c in piv.columns if c != "timestamp_ns"]:
+        piv[col] = piv[col].diff()
+
+    dt_ns = piv["timestamp_ns"].diff()
+    half_dt_ns = int(dt_ns.median() / 2)
+    piv = piv.iloc[1:].reset_index(drop=True)
+
+    return piv, half_dt_ns
+
+
+def merge_device_with_traces(device_dir, trace_pkl, output):
+    """Merge device counter samples with PyTorch trace annotations.
+
+    Each counter group keeps its own runtime kernel trace and samples.
+    Annotations (operator-name, layer, iteration) are stolen from ts.pkl
+    via reverse-cumcount matching.
+
+    Output: {
+        "groups": {gi: {"kernels": df, "samples": df, "counters": [...]}},
+        "counter_to_group": {counter_name: group_index},
+    }
+    """
+    import pickle
+    from pathlib import Path
+
+    t0 = time.time()
+
+    # Load ts.pkl for annotations
+    df_ts = pd.read_pickle(trace_pkl)
+    last_iter = df_ts["iteration"].dropna().unique().max()
+    logger.info(f"Stealing annotations from iteration {last_iter} of {trace_pkl}")
+    df_last = df_ts[df_ts["iteration"] == last_iter].copy()
+    df_last = df_last.sort_values("ts").reset_index(drop=True)
+    gpus = sorted(df_last["gpu"].unique())
+
+    # Load device sampling CSVs
+    device_dir = Path(device_dir)
+    group_dirs = sorted(device_dir.glob("chopper_device_counters*"))
+    assert group_dirs, f"No chopper_device_counters* dirs in {device_dir}"
+
+    ann_cols = ["operator-name", "layer", "iteration"]
+    for c in ann_cols:
+        assert c in df_last.columns, f"ts.pkl missing required column: {c}"
+
+    # Prepare ts.pkl reverse cumcount per GPU (done once)
+    ts_by_gpu = {}
+    for gpu in gpus:
+        ts_gpu = df_last[df_last["gpu"] == gpu].copy()
+        ts_gpu["_mi"] = (
+            ts_gpu.iloc[::-1].groupby("name").cumcount().iloc[::-1]
+        )
+        ts_by_gpu[gpu] = ts_gpu
+
+    output_groups = {}
+    counter_to_group = {}
+
+    for gi, group_dir in enumerate(group_dirs):
+        counter_files = sorted(group_dir.glob("counter_samples_rank*.csv"))
+        trace_files = sorted(group_dir.glob("kernel_traces_rank*.csv"))
+        assert counter_files, f"No counter_samples_rank*.csv in {group_dir}"
+        assert trace_files, f"No kernel_traces_rank*.csv in {group_dir}"
+
+        all_kernels = []
+        all_samples = []
+        group_counter_names = None
+
+        for gpu in gpus:
+            counter_file = group_dir / f"counter_samples_rank{gpu}.csv"
+            trace_file = group_dir / f"kernel_traces_rank{gpu}.csv"
+            assert counter_file.is_file(), f"Missing {counter_file}"
+            assert trace_file.is_file(), f"Missing {trace_file}"
+
+            runtime_df = pd.read_csv(trace_file)
+            assert len(runtime_df) > 0, f"Empty kernel trace: {trace_file}"
+            runtime_df = runtime_df.sort_values("start_ns").reset_index(drop=True)
+
+            counter_df = pd.read_csv(counter_file)
+            assert len(counter_df) > 0, f"Empty counter file: {counter_file}"
+            samples_piv, half_dt_ns = _prepare_device_samples(counter_df)
+
+            if group_counter_names is None:
+                group_counter_names = [c for c in samples_piv.columns if c != "timestamp_ns"]
+
+            # Apply midpoint correction
+            samples_piv = samples_piv.copy()
+            samples_piv["timestamp_ns"] = samples_piv["timestamp_ns"] - half_dt_ns
+            samples_piv["gpu"] = gpu
+
+            logger.info(f"Group {gi}, GPU {gpu}: {len(samples_piv)} samples, "
+                        f"{len(runtime_df)} runtime kernels")
+
+            # Annotate runtime kernels from ts.pkl
+            kernel_rows = runtime_df.rename(columns={
+                "kernel_name": "name",
+                "start_ns": "ts",
+                "duration_ns": "dur",
+            }).copy()
+            kernel_rows["gpu"] = gpu
+
+            # Reverse cumcount match to steal annotations
+            ts_gpu = ts_by_gpu[gpu]
+            ts_names = set(ts_gpu["name"])
+            rt_names = set(kernel_rows["name"])
+            shared = ts_names & rt_names
+            rt_only = rt_names - ts_names
+            if rt_only:
+                logger.warning(f"  Group {gi}, GPU {gpu}: {len(rt_only)} kernels not in ts.pkl")
+
+            kernel_rows["_mi"] = (
+                kernel_rows.iloc[::-1].groupby("name").cumcount().iloc[::-1]
+            )
+            kernel_rows = kernel_rows.merge(
+                ts_gpu[["name", "_mi"] + ann_cols],
+                on=["name", "_mi"],
+                how="left",
+            )
+            kernel_rows = kernel_rows.drop(
+                columns=["_mi", "end_ns", "agent_id", "queue_id", "correlation_id"],
+                errors="ignore",
+            )
+
+            all_kernels.append(kernel_rows)
+            all_samples.append(samples_piv)
+
+        df_kernels = pd.concat(all_kernels, ignore_index=True)
+        df_samples = pd.concat(all_samples, ignore_index=True)
+        df_samples = df_samples.sort_values(["gpu", "timestamp_ns"]).reset_index(drop=True)
+
+        n_annotated = df_kernels["operator-name"].notna().sum()
+        logger.info(f"Group {gi}: {len(df_kernels)} kernels ({n_annotated} annotated), "
+                    f"{len(df_samples)} samples, counters: {group_counter_names}")
+
+        output_groups[gi] = {
+            "kernels": df_kernels,
+            "samples": df_samples,
+            "counters": group_counter_names,
+        }
+        for cname in group_counter_names:
+            counter_to_group[cname] = gi
+
+    result = {
+        "groups": output_groups,
+        "counter_to_group": counter_to_group,
+    }
+    with open(output, "wb") as f:
+        pickle.dump(result, f)
+
+    t1 = time.time()
+    logger.info(f"Wrote {output} in {t1 - t0:.2f}s")
+    logger.info(f"  {len(output_groups)} groups, {len(gpus)} GPUs")
+    logger.info(f"  Counter -> group: {counter_to_group}")
+
+
 def merge_device_counters(device_dir, output):
     """Store device sampling CSVs into a pickle. No transformations.
 
@@ -413,6 +582,11 @@ def merge_device_counters(device_dir, output):
 
 
 def main(traces, pickles, counters, device_dir, output):
+    if device_dir and pickles:
+        assert len(pickles) == 1, "pass exactly one pickle with --device-dir"
+        merge_device_with_traces(device_dir, pickles[0], output)
+        return
+
     if device_dir:
         merge_device_counters(device_dir, output)
         return
@@ -464,10 +638,11 @@ if __name__ == '__main__':
     parser = ArgumentParser(description=(
         "Merge PyTorch traces into a kernel pickle, combine pickles, "
         "join hardware counters, or merge device sampling data.\n"
-        "  1) -t trace*.json -o ts.pkl              (parse traces)\n"
-        "  2) -p iter*.pkl -o ts.pkl                 (combine pickles)\n"
-        "  3) -p ts.pkl -c batch0/*.csv -o out.pkl   (add counters)\n"
-        "  4) --device-dir outputs/run -o device.pkl  (device sampling)\n"
+        "  1) -t trace*.json -o ts.pkl                       (parse traces)\n"
+        "  2) -p iter*.pkl -o ts.pkl                          (combine pickles)\n"
+        "  3) -p ts.pkl -c batch0/*.csv -o out.pkl            (add counters)\n"
+        "  4) --device-dir outputs/run -o device.pkl           (raw device CSVs)\n"
+        "  5) --device-dir outputs/run -p ts.pkl -o merged.pkl (device + traces)\n"
     ))
     parser.add_argument('-t', '--traces', nargs='+')
     parser.add_argument('-p', '--pickles', nargs='+')

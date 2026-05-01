@@ -7,7 +7,6 @@ LD_PRELOAD, configured via environment variables.
 
 import os
 import pathlib
-import site
 import subprocess
 from math import ceil
 from pathlib import Path
@@ -20,43 +19,67 @@ MAX_COUNTERS_PER_GROUP = 4
 def _get_lib_path() -> str:
     """Locate the device counters shared library.
 
-    Search order:
-      1. CHOPPER_DEVICE_LIB env var (explicit override)
-      2. Relative to this file: lib/
-      3. Installed site-packages
+    With editable installs, __file__ points to the source tree but the
+    .so lives in site-packages. Check both.
     """
     env_path = os.environ.get("CHOPPER_DEVICE_LIB")
     if env_path and os.path.isfile(env_path):
         return env_path
 
     pkg_dir = pathlib.Path(__file__).resolve().parent
+    source_lib = pkg_dir / "lib" / LIB_NAME
+    if source_lib.is_file():
+        return str(source_lib)
 
-    candidates = [
-        pkg_dir / "lib" / LIB_NAME,
-        pkg_dir / LIB_NAME,
-    ]
-
-    sp_dirs = site.getsitepackages() if hasattr(site, "getsitepackages") else []
-    user_sp = getattr(site, "getusersitepackages", lambda: None)()
-    if user_sp:
-        sp_dirs.append(user_sp)
-
-    for sp in sp_dirs:
-        candidates.append(
-            pathlib.Path(sp) / "chopper" / "profile" / "telemetry" / "lib" / LIB_NAME
-        )
-
-    for candidate in candidates:
-        if candidate.is_file():
-            return str(candidate)
-
-    searched = [str(c) for c in candidates]
-    raise FileNotFoundError(
-        f"Could not locate {LIB_NAME}. "
-        f"Build it with: make -C chopper/profile/telemetry/src\n"
-        f"Or set CHOPPER_DEVICE_LIB to the library location.\n"
-        f"Searched: {searched}"
+    # Editable install: .so is in site-packages, not source tree
+    import importlib.util
+    spec = importlib.util.find_spec("chopper.profile.telemetry")
+    assert spec is not None and spec.origin is not None, (
+        f"Cannot find chopper.profile.telemetry package"
     )
+    installed_lib = pathlib.Path(spec.origin).parent / "lib" / LIB_NAME
+    assert installed_lib.is_file(), (
+        f"{LIB_NAME} not found at {source_lib} or {installed_lib}. "
+        f"Build with: pip install -e . (or set CHOPPER_DEVICE_LIB)"
+    )
+    return str(installed_lib)
+
+
+def _build_groups(counter_names: list | None) -> list[list[str]]:
+    """Build counter groups from CLI input.
+
+    counter_names comes from argparse with action='append', nargs='+':
+      - None: no --counters flag
+      - [['A', 'B', 'C', 'D', 'E']]: single --counters, auto-group by 4
+      - [['A', 'B'], ['C', 'D']]: multiple --counters, explicit groups
+
+    Returns a list of groups, where each group is a list of counter names.
+    """
+    if counter_names is None or len(counter_names) == 0:
+        return []
+
+    assert isinstance(counter_names[0], list), (
+        f"Expected list of lists from argparse, got {type(counter_names[0])}"
+    )
+
+    if len(counter_names) == 1:
+        # Single --counters flag: auto-group by MAX_COUNTERS_PER_GROUP
+        flat = counter_names[0]
+        n_groups = ceil(len(flat) / MAX_COUNTERS_PER_GROUP)
+        groups = []
+        for gi in range(n_groups):
+            group = flat[gi * MAX_COUNTERS_PER_GROUP:(gi + 1) * MAX_COUNTERS_PER_GROUP]
+            groups.append(group)
+        return groups
+
+    # Multiple --counters flags: explicit groups, assert each <= 4
+    for gi, group in enumerate(counter_names):
+        assert len(group) <= MAX_COUNTERS_PER_GROUP, (
+            f"Group {gi} has {len(group)} counters ({group}), "
+            f"max is {MAX_COUNTERS_PER_GROUP}"
+        )
+        assert len(group) > 0, f"Group {gi} is empty"
+    return counter_names
 
 
 def main(
@@ -89,13 +112,11 @@ def main(
     else:
         outdir = Path(outdir)
 
-    if counter_names is not None and len(counter_names) > 0:
-        n_counters = len(counter_names)
-        leading_zeros = len(str(n_counters))
-        n_groups = ceil(n_counters / MAX_COUNTERS_PER_GROUP)
+    groups = _build_groups(counter_names)
+    if len(groups) > 0:
+        leading_zeros = max(1, len(str(len(groups) - 1)))
 
-        for gi in range(n_groups):
-            group = counter_names[gi * MAX_COUNTERS_PER_GROUP:(gi + 1) * MAX_COUNTERS_PER_GROUP]
+        for gi, group in enumerate(groups):
             dir_num = str(gi).zfill(leading_zeros)
             counter_dir = outdir / f"chopper_device_counters{dir_num}"
             counter_dir.mkdir(parents=True, exist_ok=True)
