@@ -1,7 +1,7 @@
 """GEMM operator duration distribution per configuration.
 
 Violin plots of normalized GEMM forward and backward operator durations across
-configurations and frameworks. (Paper Figure: gemm_time.pdf)
+configurations. Forward and backward shown on the same tick with different colors.
 """
 
 import numpy as np
@@ -18,11 +18,11 @@ def get_data(
     configs: list[str] = ["default"],
     fops: list[str] = [
         "f_attn_fa", "f_mlp_dp", "f_mlp_gp", "f_mlp_up",
-        "f_qkv_ip", "f_attn_op", "f_lp",
+        "f_q_ip", "f_k_ip", "f_v_ip", "f_attn_op", "f_lp",
     ],
     bops: list[str] = [
         "b_attn_fa", "b_mlp_dp", "b_mlp_gp", "b_mlp_up",
-        "b_qkv_ip", "b_attn_op", "b_lp",
+        "b_q_ip", "b_k_ip", "b_v_ip", "b_attn_op", "b_lp",
     ],
 ):
     """Load and process GEMM operator timing data.
@@ -84,7 +84,7 @@ def draw(
 ):
     """Draw GEMM operator duration violin plots per configuration.
 
-    Two rows (forward / backward) by N columns (one per modulation parameter).
+    Single row with fwd/bwd on same tick using different colors.
 
     Args:
         fig: Matplotlib Figure object to draw on
@@ -93,6 +93,7 @@ def draw(
     """
     data, fops, bops = input_data
     params = list(data.keys())
+    assert len(fops) == len(bops), "fops and bops must have same length"
 
     fig.clear()
     fig.patches.clear()
@@ -104,67 +105,81 @@ def draw(
             wspace=paper_mode.wspace, hspace=paper_mode.hspace,
         )
 
-    n_rows, n_cols = 2, len(params)
-    axs = tuple(
-        tuple(fig.add_subplot(n_rows, n_cols, r * n_cols + c + 1) for c in range(n_cols))
-        for r in range(n_rows)
-    )
+    # Strip f_/b_ prefix for labels
+    labels = [op[2:] for op in fops]
 
-    violin_color = rgb(0xD4, 0x11, 0x59)
-    line_color = (
-        max(0, violin_color[0] - 0.3),
-        max(0, violin_color[1] - 0.3),
-        max(0, violin_color[2] - 0.3),
-    )
-    violin_alpha = 0.7
+    n_cols = len(params)
+    axs = [fig.add_subplot(1, n_cols, c + 1) for c in range(n_cols)]
+
+    fwd_color = rgb(0xD4, 0x11, 0x59)
+    bwd_color = rgb(0x33, 0x99, 0xCC)
+
+    y_ticks = np.arange(1, len(labels) + 1)
 
     for i, setup in enumerate(params):
-        for do_fops in (True, False):
-            xlim = 1
-            sel_ops = fops if do_fops else bops
-            y_ticks = np.arange(1, len(sel_ops) + 1)
-            ax = axs[0 if do_fops else 1][i]
+        ax = axs[i]
+        ax.set_yticks(y_ticks)
+        ax.set_ylim(y_ticks[0] - 0.5, y_ticks[-1] + 0.5)
+        ax.set_xlim(-0.05, 1.05)
 
-            ax.set_yticks(y_ticks)
-            ax.set_ylim(y_ticks[0] - 0.5, y_ticks[-1] + 0.5)
-            if i == 0:
-                ax.set_yticklabels(tuple(sel_ops))
-            else:
-                ax.set_yticklabels([])
-                ax.tick_params(axis="y", length=0)
+        if i == 0:
+            ax.set_yticklabels(labels)
+        else:
+            ax.set_yticklabels([])
+            ax.tick_params(axis="y", length=0)
 
-            if i == n_cols // 2 and not do_fops:
-                ax.set_xlabel("norm duration", labelpad=0)
+        ax.set_title(setup, fontsize=8, pad=2)
 
-            op_data = [
-                data[setup].groupby("operator-name").get_group(op)["elapsed_time"].values
-                for op in sel_ops
-            ]
-            parts = ax.violinplot(
-                op_data, positions=y_ticks, vert=False,
-                showmedians=True, widths=0.9,
-            )
-            for pc in parts["bodies"]:
-                pc.set_alpha(violin_alpha)
-                pc.set_facecolor(violin_color)
-                pc.set_edgecolor(violin_color)
-            for line_type in ["cmedians", "cmins", "cmaxes", "cbars"]:
-                parts[line_type].set_color(
-                    tuple(line_color for _ in sel_ops)
-                )
-                parts[line_type].set_linewidth(0.4)
+        # Backward violins (drawn first, behind)
+        bwd_data = [
+            data[setup].groupby("operator-name").get_group(op)["elapsed_time"].values
+            for op in bops
+        ]
+        bwd_parts = ax.violinplot(
+            bwd_data, positions=y_ticks, vert=False,
+            showmedians=True, widths=0.8,
+        )
+        for pc in bwd_parts["bodies"]:
+            pc.set_alpha(0.5)
+            pc.set_facecolor(bwd_color)
+            pc.set_edgecolor(bwd_color)
+        for lt in ["cmedians", "cmins", "cmaxes", "cbars"]:
+            bwd_parts[lt].set_color([bwd_color] * len(bops))
+            bwd_parts[lt].set_linewidth(0.4)
 
-            ax.grid(axis="y", linestyle="--", alpha=0.5)
-            ax.grid(axis="x", linestyle="-", alpha=0.5)
-            ax.set_xticks((0.5,))
-            if not do_fops:
-                ax.set_title(setup, fontsize=8, pad=1)
-                ax.tick_params(axis="x", which="major", pad=1)
-            else:
-                ax.set_xticklabels([])
-                ax.tick_params(axis="x", length=0)
-            ax.tick_params(axis="y", which="major", pad=1)
-            ax.set_xlim((-xlim * 5e-2, xlim + xlim * 5e-2))
+        # Forward violins (drawn on top)
+        fwd_data = [
+            data[setup].groupby("operator-name").get_group(op)["elapsed_time"].values
+            for op in fops
+        ]
+        fwd_parts = ax.violinplot(
+            fwd_data, positions=y_ticks, vert=False,
+            showmedians=True, widths=0.8,
+        )
+        for pc in fwd_parts["bodies"]:
+            pc.set_alpha(0.7)
+            pc.set_facecolor(fwd_color)
+            pc.set_edgecolor(fwd_color)
+        for lt in ["cmedians", "cmins", "cmaxes", "cbars"]:
+            fwd_parts[lt].set_color([fwd_color] * len(fops))
+            fwd_parts[lt].set_linewidth(0.4)
+
+        ax.grid(axis="y", linestyle="--", alpha=0.5)
+        ax.grid(axis="x", linestyle="-", alpha=0.5)
+        ax.set_xticks((0.5,))
+        ax.tick_params(axis="y", which="major", pad=1)
+        ax.tick_params(axis="x", which="major", pad=1)
+        if i == n_cols // 2:
+            ax.set_xlabel("norm duration", labelpad=0)
+
+    fig.legend(
+        handles=[
+            mpatches.Patch(color=fwd_color, alpha=0.7, label="fwd"),
+            mpatches.Patch(color=bwd_color, alpha=0.7, label="bwd"),
+        ],
+        loc="upper center", ncol=2, frameon=False, fontsize=8,
+        bbox_to_anchor=(0.5, 1.02),
+    )
 
     if paper_mode.enabled:
         fig.patches.append(
@@ -181,20 +196,20 @@ def main(
     configs: list[str] = ["default"],
     fops: list[str] = [
         "f_attn_fa", "f_mlp_dp", "f_mlp_gp", "f_mlp_up",
-        "f_qkv_ip", "f_attn_op", "f_lp",
+        "f_q_ip", "f_k_ip", "f_v_ip", "f_attn_op", "f_lp",
     ],
     bops: list[str] = [
         "b_attn_fa", "b_mlp_dp", "b_mlp_gp", "b_mlp_up",
-        "b_qkv_ip", "b_attn_op", "b_lp",
+        "b_q_ip", "b_k_ip", "b_v_ip", "b_attn_op", "b_lp",
     ],
     paper_mode: PaperMode = PaperMode(),
-    figsize: tuple[float, float] = (7.16, 4.0),
+    figsize: tuple[float, float] = (7.16, 2.5),
     filename: str = "gemm_time.pdf",
 ):
     fig = Figure(figsize=figsize)
     input_data = get_data(ts_files, configs, fops, bops)
     draw(fig, input_data, paper_mode)
-    fig.savefig(filename, dpi=300)
+    fig.savefig(filename, dpi=300, bbox_inches="tight")
 
 
 if __name__ == "__main__":

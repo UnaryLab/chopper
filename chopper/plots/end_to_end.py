@@ -1,9 +1,7 @@
-"""End-to-end throughput, iteration duration, and per-phase breakdown.
+"""End-to-end throughput and time-per-token breakdown.
 
-Per-config throughput (normalized) alongside iteration time decomposed by
-training chunk, plus forward/backward duration broken out by operator type
-(GEMM/FA/Vec). Includes launch-overhead bubbles per chunk and per operator
-type. (Paper Figure: end_to_end.pdf)
+Per-config throughput (normalized) alongside time-per-token decomposed by
+operator type (GEMM/FA/Vec) with fwd/bwd split, plus launch overhead.
 """
 
 import re
@@ -85,7 +83,7 @@ def draw(
     norm_setup: str | None = None,
     paper_mode: PaperMode = PaperMode(),
 ):
-    """Draw a 2x2 grid: throughput, iteration duration, fwd/bwd breakdown.
+    """Draw 1x2: throughput (left), time-per-token breakdown (right).
 
     Args:
         fig: Matplotlib Figure object to draw on
@@ -108,216 +106,151 @@ def draw(
             wspace=paper_mode.wspace, hspace=paper_mode.hspace,
         )
 
-    n_rows, n_cols = 2, 2
-    axs = tuple(
-        tuple(
-            fig.add_subplot(n_rows, n_cols, r * n_cols + c + 1)
-            for c in range(n_cols)
-        )
-        for r in range(n_rows)
-    )
-
+    ax_tput, ax_tpt = fig.subplots(1, 2, gridspec_kw={"wspace": 0.05})
     params = list(dfs.keys())
 
-    chunks = None
-    for df in dfs.values():
-        cur = tuple(sorted(df["chunk"].unique()))
-        if chunks is None:
-            chunks = cur
-        else:
-            assert chunks == cur
-    chunks = tuple(
-        sorted(chunks, key=lambda x: 0 if x[0] == "f" else 1 if x[0] == "b" else 2)
-    )
-
-    def optype_key(x):
-        return 0 if x == "FA" else 1 if x == "Vec" else 2 if x == "GEMM" else 3
-
-    optypes = None
-    for df in dfs.values():
-        cur = tuple(sorted(df["operator-type"].unique(), key=optype_key))
-        if optypes is None:
-            optypes = cur
-        else:
-            assert optypes == cur
-
-    bars = ("launch overhead", "throughput") + chunks + optypes
-    colors = tuple(okabe_ito.values())
-    bar_color = {bar: colors[i] for i, bar in enumerate(bars)}
-
+    # ── Compute throughput ──
     tok_p_sec = {}
-    chunk_time = {}
-    bubble_time = {}
-    for setup in dfs.keys():
-        df = dfs[setup]
-
+    for setup, df in dfs.items():
         batch_size = int(re.findall(r"b(\d+)", setup)[0])
         seq_len = int(re.findall(r"s(\d+)", setup)[0]) << 10
         tokens = batch_size * seq_len
-
         iter_time = (
-            (
-                dfs[setup].groupby(["gpu", "iteration"])["dur"].sum()
-                + dfs[setup].groupby(["gpu", "iteration"])["launch_overhead"].sum()
-            )
-            .groupby("iteration")
-            .max()
-            .median()
+            (df.groupby(["gpu", "iteration"])["dur"].sum()
+             + df.groupby(["gpu", "iteration"])["launch_overhead"].sum())
+            .groupby("iteration").max().median()
         )
         tok_p_sec[setup] = tokens / iter_time
 
-        chunk_time[setup] = (
-            dfs[setup]
-            .groupby(["gpu", "iteration", "chunk"])["dur"]
-            .sum()
-            .groupby("chunk")
-            .median()
-            .to_dict()
-        )
-        bubble_time[setup] = (
-            dfs[setup]
-            .groupby(["gpu", "iteration", "chunk"])
-            .agg(launch_overhead=("launch_overhead", "sum"))["launch_overhead"]
-            .groupby("chunk")
-            .median()
-            .to_dict()
-        )
+    # ── Compute time-per-token components ──
+    tpt = {}  # {config: {component: time_per_token}}
+    for setup, df in dfs.items():
+        batch_size = int(re.findall(r"b(\d+)", setup)[0])
+        seq_len = int(re.findall(r"s(\d+)", setup)[0]) << 10
+        tokens = batch_size * seq_len
+        components = {}
+        for chunk in ["fwd", "bwd"]:
+            for optype in ["FA", "Vec", "GEMM"]:
+                mask = (df["operator-type"] == optype) & (df["chunk"] == chunk)
+                dur = df[mask].groupby(["gpu", "iteration"])["dur"].sum().median()
+                components[f"{chunk}_{optype}"] = dur / tokens
+        overhead = df.groupby(["gpu", "iteration"])["launch_overhead"].sum().median()
+        components["overhead"] = overhead / tokens
+        opt_dur = df[df["chunk"] == "opt"].groupby(["gpu", "iteration"])["dur"].sum().median()
+        components["opt"] = opt_dur / tokens
+        tpt[setup] = components
 
-    chunk_time_norm = sum(
-        chunk_time[norm_setup][chunk] + bubble_time[norm_setup][chunk]
-        for chunk in chunks
-    )
+    # Find best config for normalization (lowest total time per token)
+    tpt_norm_setup = min(params, key=lambda c: sum(tpt[c].values()))
+    norm_total = sum(tpt[tpt_norm_setup].values())
 
-    for col_idx in range(2):
-        for row_idx in range(2):
-            ax = axs[row_idx][col_idx]
-            ax.yaxis.set_major_locator(MaxNLocator(nbins=(4 if row_idx == 0 else 5)))
-            for setup, df in dfs.items():
-                tick = params.index(setup)
-                bar_width = 0.9
-                ax.set_xticks(range(len(params)))
-                ax.set_xticklabels(params)
-                ax.set_xlim(-0.5, len(params) - 1 + 0.5)
-                ax.tick_params(axis="y", pad=2)
+    # ── Left panel: throughput ──
+    x = np.arange(len(params))
+    bar_width = 0.75
+    colors = list(okabe_ito.values())
 
-                if col_idx == 0 and row_idx == 0:
-                    ax.set_title("throughput", pad=2, fontsize=8)
-                    value = tok_p_sec[setup] / tok_p_sec[norm_setup]
-                    ax.bar(
-                        tick,
-                        value,
-                        width=bar_width * 0.9,
-                        bottom=0,
-                        color=bar_color["throughput"],
-                        alpha=0.999,
-                        linewidth=0,
-                    )
-                    ax.set_ylabel("norm", labelpad=1)
-                    ax.grid(axis="y", linestyle="--", alpha=0.5)
-                    ax.spines["top"].set_visible(False)
-                    ax.spines["right"].set_visible(False)
-                    ax.set_xticklabels([])
-                    ax.tick_params(axis="x", length=0)
+    ax_tput.set_title("throughput", pad=2, fontsize=8)
+    for i, setup in enumerate(params):
+        value = tok_p_sec[setup] / tok_p_sec[norm_setup] * 100
+        ax_tput.bar(i, value, width=bar_width, color=colors[1],
+                    linewidth=0, alpha=0.999)
+        ax_tput.text(i, value / 2, f"{value:.0f}",
+                     ha="center", va="center", fontsize=8,
+                     color="white", fontweight="bold")
+    ax_tput.set_ylabel(f"norm to {norm_setup} (%)", labelpad=1)
+    ax_tput.set_xticks(x)
+    ax_tput.set_xticklabels(params)
+    ax_tput.grid(axis="y", linestyle="--", alpha=0.5)
+    ax_tput.spines["top"].set_visible(False)
+    ax_tput.spines["right"].set_visible(False)
+    ax_tput.yaxis.set_major_locator(MaxNLocator(nbins=5))
 
-                elif col_idx == 1 and row_idx == 0:
-                    ax.set_title("iteration duration", pad=2, fontsize=8)
-                    bottom = 0
-                    for chunk in chunks:
-                        value = chunk_time[setup][chunk] / chunk_time_norm
-                        ax.bar(
-                            tick, value,
-                            width=bar_width * 0.9, bottom=bottom,
-                            color=bar_color[chunk], linewidth=0, alpha=0.999,
-                            )
-                        bottom += value
-                        value = bubble_time[setup][chunk] / chunk_time_norm
-                        ax.bar(
-                            tick, value,
-                            width=bar_width * 0.9, bottom=bottom,
-                            color=bar_color["launch overhead"],
-                            linewidth=0, alpha=0.999,                        )
-                        bottom += value
-                    ax.grid(axis="y", linestyle="--", alpha=0.5)
-                    ax.spines["top"].set_visible(False)
-                    ax.spines["left"].set_visible(False)
-                    ax.spines["right"].set_visible(False)
-                    ax.set_yticklabels([])
-                    ax.tick_params(axis="y", length=0)
-                    ax.set_xticklabels([])
-                    ax.tick_params(axis="x", length=0)
+    # ── Right panel: time per token breakdown ──
+    split_categories = [
+        ("GEMM", "fwd_GEMM", "bwd_GEMM", "#cc79a7"),
+        ("FA", "fwd_FA", "bwd_FA", "#e69f00"),
+        ("Vec", "fwd_Vec", "bwd_Vec", "#d55e00"),
+    ]
+    single_categories = [
+        ("Optimizer", lambda r: r["opt"], "#f0e442"),
+        ("Launch overhead", lambda r: r["overhead"], "#000000"),
+    ]
 
-                else:
-                    is_fwd = row_idx == 1 and col_idx == 0
-                    chunk_label = "fwd" if is_fwd else "bwd"
-                    if col_idx == 0:
-                        ax.set_ylabel("breakdown (%)", labelpad=1)
-                    title = "forward duration" if is_fwd else "backward duration"
-                    ax.set_title(title, pad=2, fontsize=8)
+    ax_tpt.set_title("time per token", pad=2, fontsize=8)
+    total_width = 0.75
+    bottom = np.zeros(len(params))
 
-                    bottom = 0
-                    ot_vals = {}
-                    ot_bubbles = {}
-                    for optype in optypes:
-                        tmp_mask = (df["operator-type"] == optype) & (
-                            df["chunk"] == chunk_label
-                        )
-                        ot_vals[optype] = (
-                            df[tmp_mask].groupby(["gpu", "iteration"])["dur"].sum()
-                        ).median()
-                        ot_bubbles[optype] = (
-                            df[tmp_mask]
-                            .groupby(["gpu", "iteration"])["launch_overhead"]
-                            .sum()
-                        ).median()
-                    stretch = sum(ot_vals.values()) + sum(ot_bubbles.values())
-                    for optype in optypes:
-                        bar_value = ot_vals[optype] / stretch * 100
-                        ax.bar(
-                            tick, bar_value,
-                            width=bar_width * 0.9, bottom=bottom,
-                            color=bar_color[optype], linewidth=0, alpha=0.999,
-                            )
-                        bottom += bar_value
-                        bar_value = ot_bubbles[optype] / stretch * 100
-                        ax.bar(
-                            tick, bar_value,
-                            width=bar_width * 0.9, bottom=bottom,
-                            color=bar_color["launch overhead"],
-                            linewidth=0, alpha=0.999,                        )
-                        bottom += bar_value
-                    ax.grid(axis="y", linestyle="--", alpha=0.5)
-                    ax.tick_params(axis="x", pad=1)
-                    ax.spines["top"].set_visible(False)
-                    if col_idx == 1:
-                        ax.spines["left"].set_visible(False)
-                        ax.set_yticklabels([])
-                        ax.tick_params(axis="y", length=0)
-                    ax.spines["right"].set_visible(False)
+    for label, fwd_key, bwd_key, color in split_categories:
+        fwd_vals = np.array([tpt[c][fwd_key] / norm_total * 100 for c in params])
+        bwd_vals = np.array([tpt[c][bwd_key] / norm_total * 100 for c in params])
+        total_vals = fwd_vals + bwd_vals
 
-    l0, u0 = axs[0][0].get_ylim()
-    l1, u1 = axs[0][1].get_ylim()
-    y_lim = (min(l0, l1), max(u0, u1))
-    axs[0][0].set_ylim(y_lim)
-    axs[0][1].set_ylim(y_lim)
-    l0, u0 = axs[1][0].get_ylim()
-    l1, u1 = axs[1][1].get_ylim()
-    y_lim = (min(l0, l1), max(u0, u1))
-    axs[1][0].set_ylim(y_lim)
-    axs[1][1].set_ylim(y_lim)
+        for i in range(len(params)):
+            fwd_frac = fwd_vals[i] / total_vals[i] if total_vals[i] > 0 else 0.5
+            fwd_w = total_width * fwd_frac
+            bwd_w = total_width * (1 - fwd_frac)
 
-    bar_handles = [mpatches.Patch(color=bar_color[bar], label=bar.lower()) for bar in bars]
+            ax_tpt.bar(x[i] - total_width / 2 + fwd_w / 2, total_vals[i],
+                       fwd_w, bottom=bottom[i], color=color,
+                       linewidth=0, alpha=0.999)
+            ax_tpt.bar(x[i] + total_width / 2 - bwd_w / 2, total_vals[i],
+                       bwd_w, bottom=bottom[i], color=color,
+                       linewidth=0, alpha=0.7)
+
+            if total_vals[i] > 6:
+                mid_y = bottom[i] + total_vals[i] / 2
+                ax_tpt.text(x[i] - total_width / 2 + fwd_w / 2, mid_y,
+                            f"{fwd_vals[i]:.0f}", ha="center", va="center",
+                            fontsize=6, color="white", fontweight="bold")
+                ax_tpt.text(x[i] + total_width / 2 - bwd_w / 2, mid_y,
+                            f"{bwd_vals[i]:.0f}", ha="center", va="center",
+                            fontsize=6, color="white", fontweight="bold")
+
+        bottom += total_vals
+
+    for label, fn, color in single_categories:
+        vals = np.array([fn(tpt[c]) / norm_total * 100 for c in params])
+        ax_tpt.bar(x, vals, total_width, bottom=bottom, color=color,
+                   linewidth=0, alpha=0.999)
+        for i, v in enumerate(vals):
+            if v > 4:
+                ax_tpt.text(i, bottom[i] + v / 2, f"{v:.0f}",
+                            ha="center", va="center", fontsize=6,
+                            color="white", fontweight="bold")
+        bottom += vals
+
+    ax_tpt.set_ylabel(f"norm to {tpt_norm_setup} (%)", labelpad=1)
+    ax_tpt.set_xticks(x)
+    ax_tpt.set_xticklabels(params)
+    ax_tpt.grid(axis="y", linestyle="--", alpha=0.3)
+    ax_tpt.axhline(y=100, color="gray", linestyle=":", alpha=0.5)
+    ax_tpt.spines["top"].set_visible(False)
+    ax_tpt.spines["left"].set_visible(False)
+    ax_tpt.yaxis.set_label_position("right")
+    ax_tpt.yaxis.tick_right()
+
+    # ── Legend ──
+    handles = []
+    handles.append(mpatches.Patch(color=colors[1], label="throughput"))
+    for label, _, _, color in split_categories:
+        handles.append(mpatches.Patch(color=color, label=label))
+    for label, _, color in single_categories:
+        handles.append(mpatches.Patch(color=color, label=label))
+    # Add fwd/bwd indicator
+    handles.append(mpatches.Patch(facecolor="gray", alpha=0.999, label="opaque=fwd"))
+    handles.append(mpatches.Patch(facecolor="gray", alpha=0.5, label="transparent=bwd"))
 
     legend_kwargs = dict(
-        handles=bar_handles,
+        handles=handles,
         loc="upper center",
-        ncol=len(bars),
-        labelspacing=0.2,
-        handletextpad=0.4,
-        columnspacing=1.4,
-        handlelength=0.5,
+        ncol=len(handles),
         frameon=False,
+        fontsize=7,
+        handlelength=0.8,
+        columnspacing=0.8,
+        handletextpad=0.3,
     )
-    if paper_mode.enabled and paper_mode.legend_bbox is not None:
+    if paper_mode.legend_bbox is not None:
         legend_kwargs["bbox_to_anchor"] = paper_mode.legend_bbox
     fig.legend(**legend_kwargs)
 
@@ -335,14 +268,14 @@ def main(
     ts_files: list[str] = ["./ts.pkl"],
     configs: list[str] = ["b1s4"],
     norm_setup: str | None = None,
-    paper_mode: PaperMode = PaperMode(),
-    figsize: tuple[float, float] = (7.16, 3.5),
+    paper_mode: PaperMode = PaperMode(legend_bbox=(0.5, 1.02)),
+    figsize: tuple[float, float] = (7.16, 2.5),
     filename: str = "end_to_end.pdf",
 ):
     fig = Figure(figsize=figsize)
     input_data = get_data(ts_files, configs)
     draw(fig, input_data, norm_setup, paper_mode)
-    fig.savefig(filename, dpi=300)
+    fig.savefig(filename, dpi=300, bbox_inches="tight")
 
 
 if __name__ == "__main__":

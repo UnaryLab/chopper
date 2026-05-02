@@ -1,7 +1,7 @@
 """Vector operator duration distribution per configuration.
 
-Violin plots of normalized Vec-type operator durations split into forward,
-backward, and optimizer/grad-accumulation phases. (Paper Figure: vec_time.pdf)
+Violin plots of normalized Vec-type operator durations. Forward and backward
+shown on the same tick with different colors, optimizer ops separate.
 """
 
 import numpy as np
@@ -16,9 +16,9 @@ from chopper.common.annotations import PaperMode
 def get_data(
     ts_files: list[str] = ["./ts.pkl"],
     configs: list[str] = ["default"],
-    fops: list[str] = ["f_attn_n", "f_mlp_n"],
-    bops: list[str] = ["b_attn_n", "b_mlp_n"],
-    oops: list[str] = ["opt_step", "b_ga"],
+    fops: list[str] = ["f_qkv_re", "f_mlp_gu", "f_mlp_gs", "f_mlp_n", "f_attn_n", "f_cel"],
+    bops: list[str] = ["b_qkv_re", "b_mlp_gu", "b_mlp_gs", "b_mlp_n", "b_attn_n", "b_cel"],
+    oops: list[str] = ["opt_step", "opt_gc"],
 ):
     """Load and process Vec operator timing data.
 
@@ -27,7 +27,7 @@ def get_data(
         configs: Config labels (e.g. "b1s4", "b2s8")
         fops: Forward Vec operator names
         bops: Backward Vec operator names
-        oops: Optimizer / grad-accumulation operator names
+        oops: Optimizer operator names
 
     Returns:
         Tuple of (data, fops, bops, oops) where data maps config -> aggregated
@@ -80,11 +80,9 @@ def draw(
     input_data,
     paper_mode: PaperMode = PaperMode(),
 ):
-    """Draw Vec operator duration violins split by training phase.
+    """Draw Vec operator duration violins.
 
-    Three phase rows (forward, backward, optimizer-style) by N columns
-    (one per modulation parameter). Includes an "other" violin for
-    forward/backward phases capturing residual Vec ops.
+    Fwd/bwd on same tick with different colors, optimizer ops in separate section.
 
     Args:
         fig: Matplotlib Figure object to draw on
@@ -93,6 +91,7 @@ def draw(
     """
     data, fops, bops, oops = input_data
     params = list(data.keys())
+    assert len(fops) == len(bops), "fops and bops must have same length"
 
     fig.clear()
     fig.patches.clear()
@@ -104,79 +103,136 @@ def draw(
             wspace=paper_mode.wspace, hspace=paper_mode.hspace,
         )
 
-    n_rows, n_cols = 4, len(params)
-    gs = fig.add_gridspec(n_rows, n_cols, height_ratios=[3, 3, 0.6, 2])
-    axs = tuple(
-        tuple(fig.add_subplot(gs[r, c]) for c in range(n_cols))
-        for r in range(n_rows)
-    )
-    for col in range(n_cols):
-        axs[2][col].set_visible(False)
+    # Strip f_/b_ prefix for fwd/bwd labels
+    fb_labels = [op[2:] for op in fops]
 
-    violin_color = rgb(0xD4, 0x11, 0x59)
-    line_color = (
-        max(0, violin_color[0] - 0.3),
-        max(0, violin_color[1] - 0.3),
-        max(0, violin_color[2] - 0.3),
-    )
-    violin_alpha = 0.7
+    n_cols = len(params)
+    n_fb = len(fb_labels)
+    n_opt = len(oops)
+    n_total = n_fb + n_opt
+
+    gs = fig.add_gridspec(2, n_cols, height_ratios=[n_fb + 1, n_opt], hspace=0.3)
+    axs_fb = [fig.add_subplot(gs[0, c]) for c in range(n_cols)]
+    axs_opt = [fig.add_subplot(gs[1, c]) for c in range(n_cols)]
+
+    fwd_color = rgb(0xD4, 0x11, 0x59)
+    bwd_color = rgb(0x33, 0x99, 0xCC)
+    opt_color = rgb(0xF0, 0xE4, 0x42)
 
     for i, setup in enumerate(params):
-        for phase in (0, 1, 2):
-            sel_ops = fops if phase == 0 else bops if phase == 1 else oops
-            if phase != 2:
-                y_ticks = np.arange(1, len(sel_ops) + 2)
-            else:
-                y_ticks = np.arange(1, len(sel_ops) + 1)
-            ax = axs[phase if phase != 2 else 3][i]
+        # ── Fwd/Bwd panel (with "other") ──
+        ax = axs_fb[i]
+        n_fb_with_other = n_fb + 1
+        y_ticks = np.arange(1, n_fb_with_other + 1)
+        ax.set_yticks(y_ticks)
+        ax.set_ylim(y_ticks[0] - 0.5, y_ticks[-1] + 0.5)
+        ax.set_xlim(-0.05, 1.05)
 
-            ax.set_yticks(y_ticks)
-            ax.set_ylim(y_ticks[0] - 0.5, y_ticks[-1] + 0.5)
-            ax.set_xlim((-0.05, 1.05))
-            if i == 0:
-                if phase != 2:
-                    ax.set_yticklabels(tuple(sel_ops) + ("other",))
-                else:
-                    ax.set_yticklabels(sel_ops)
-            else:
-                ax.set_yticklabels([])
-                ax.tick_params(axis="y", length=0)
+        if i == 0:
+            ax.set_yticklabels(fb_labels + ["other"])
+        else:
+            ax.set_yticklabels([])
+            ax.tick_params(axis="y", length=0)
 
-            if i == n_cols // 2 and phase == 2:
-                ax.set_xlabel("norm duration", labelpad=0)
+        ax.set_title(setup, fontsize=8, pad=2)
+        ax.set_xticklabels([])
+        ax.tick_params(axis="x", length=0)
 
-            op_data = tuple(
-                data[setup].groupby("operator-name").get_group(op)["elapsed_time"].values
-                for op in sel_ops
-            )
-            other_data = data[setup][
-                (~data[setup]["operator-name"].isin(tuple(fops) + tuple(bops) + tuple(oops)))
-                & (~data[setup]["chunk"].isin(("fwd",) if phase == 0 else ("bwd",)))
-            ]["elapsed_time"].values
-            parts = ax.violinplot(
-                op_data + (other_data,) if phase != 2 else op_data,
-                positions=y_ticks, vert=False,
-                showmedians=True, widths=0.9,
-            )
-            for pc in parts["bodies"]:
-                pc.set_alpha(violin_alpha)
-                pc.set_facecolor(violin_color)
-                pc.set_edgecolor(violin_color)
-            for line_type in ["cmedians", "cmins", "cmaxes", "cbars"]:
-                parts[line_type].set_color(
-                    tuple(line_color for _ in sel_ops)
-                )
-                parts[line_type].set_linewidth(0.8)
-            ax.grid(axis="y", linestyle="--", alpha=0.5)
-            ax.grid(axis="x", linestyle="-", alpha=0.5)
-            ax.set_xticks((0.5,))
-            if phase in (0, 1):
-                ax.set_xticklabels([])
-                ax.tick_params(axis="x", length=0)
-            else:
-                ax.set_title(setup, fontsize=8, pad=1)
-                ax.tick_params(axis="x", which="major", pad=1)
-            ax.tick_params(axis="y", which="major", pad=1)
+        # Backward (drawn first, behind)
+        bwd_data = [
+            data[setup].groupby("operator-name").get_group(op)["elapsed_time"].values
+            for op in bops
+        ]
+        # "other" bwd
+        bwd_other = data[setup][
+            (~data[setup]["operator-name"].isin(tuple(fops) + tuple(bops) + tuple(oops)))
+            & (data[setup]["chunk"] == "bwd")
+        ]["elapsed_time"].values
+        bwd_parts = ax.violinplot(
+            bwd_data + [bwd_other], positions=y_ticks, vert=False,
+            showmedians=True, widths=0.8,
+        )
+        for pc in bwd_parts["bodies"]:
+            pc.set_alpha(0.5)
+            pc.set_facecolor(bwd_color)
+            pc.set_edgecolor(bwd_color)
+        for lt in ["cmedians", "cmins", "cmaxes", "cbars"]:
+            bwd_parts[lt].set_color([bwd_color] * n_fb_with_other)
+            bwd_parts[lt].set_linewidth(0.4)
+
+        # Forward (drawn on top)
+        fwd_data = [
+            data[setup].groupby("operator-name").get_group(op)["elapsed_time"].values
+            for op in fops
+        ]
+        fwd_other = data[setup][
+            (~data[setup]["operator-name"].isin(tuple(fops) + tuple(bops) + tuple(oops)))
+            & (data[setup]["chunk"] == "fwd")
+        ]["elapsed_time"].values
+        fwd_parts = ax.violinplot(
+            fwd_data + [fwd_other], positions=y_ticks, vert=False,
+            showmedians=True, widths=0.8,
+        )
+        for pc in fwd_parts["bodies"]:
+            pc.set_alpha(0.7)
+            pc.set_facecolor(fwd_color)
+            pc.set_edgecolor(fwd_color)
+        for lt in ["cmedians", "cmins", "cmaxes", "cbars"]:
+            fwd_parts[lt].set_color([fwd_color] * n_fb_with_other)
+            fwd_parts[lt].set_linewidth(0.4)
+
+        ax.grid(axis="y", linestyle="--", alpha=0.5)
+        ax.grid(axis="x", linestyle="-", alpha=0.5)
+        ax.set_xticks((0.5,))
+        ax.tick_params(axis="y", which="major", pad=1)
+
+        # ── Optimizer panel ──
+        ax = axs_opt[i]
+        y_ticks_opt = np.arange(1, n_opt + 1)
+        ax.set_yticks(y_ticks_opt)
+        ax.set_ylim(y_ticks_opt[0] - 0.5, y_ticks_opt[-1] + 0.5)
+        ax.set_xlim(-0.05, 1.05)
+
+        if i == 0:
+            ax.set_yticklabels(oops)
+        else:
+            ax.set_yticklabels([])
+            ax.tick_params(axis="y", length=0)
+
+        opt_data = [
+            data[setup].groupby("operator-name").get_group(op)["elapsed_time"].values
+            for op in oops
+        ]
+        opt_parts = ax.violinplot(
+            opt_data, positions=y_ticks_opt, vert=False,
+            showmedians=True, widths=0.7,
+        )
+        for pc in opt_parts["bodies"]:
+            pc.set_alpha(0.7)
+            pc.set_facecolor(opt_color)
+            pc.set_edgecolor((0.6, 0.5, 0.0))
+            pc.set_linewidth(0.8)
+        for lt in ["cmedians", "cmins", "cmaxes", "cbars"]:
+            opt_parts[lt].set_color([opt_color] * n_opt)
+            opt_parts[lt].set_linewidth(0.4)
+
+        ax.grid(axis="y", linestyle="--", alpha=0.5)
+        ax.grid(axis="x", linestyle="-", alpha=0.5)
+        ax.set_xticks((0.5,))
+        ax.tick_params(axis="y", which="major", pad=1)
+        ax.tick_params(axis="x", which="major", pad=1)
+        if i == n_cols // 2:
+            ax.set_xlabel("norm duration", labelpad=0)
+
+    fig.legend(
+        handles=[
+            mpatches.Patch(color=fwd_color, alpha=0.7, label="fwd"),
+            mpatches.Patch(color=bwd_color, alpha=0.7, label="bwd"),
+            mpatches.Patch(color=opt_color, alpha=0.7, label="opt"),
+        ],
+        loc="upper center", ncol=3, frameon=False, fontsize=8,
+        bbox_to_anchor=(0.5, 1.02),
+    )
 
     if paper_mode.enabled:
         fig.patches.append(
@@ -191,17 +247,17 @@ def draw(
 def main(
     ts_files: list[str] = ["./ts.pkl"],
     configs: list[str] = ["default"],
-    fops: list[str] = ["f_attn_n", "f_mlp_n"],
-    bops: list[str] = ["b_attn_n", "b_mlp_n"],
-    oops: list[str] = ["opt_step", "b_ga"],
+    fops: list[str] = ["f_qkv_re", "f_mlp_gu", "f_mlp_gs", "f_mlp_n", "f_attn_n", "f_cel"],
+    bops: list[str] = ["b_qkv_re", "b_mlp_gu", "b_mlp_gs", "b_mlp_n", "b_attn_n", "b_cel"],
+    oops: list[str] = ["opt_step", "opt_gc"],
     paper_mode: PaperMode = PaperMode(),
-    figsize: tuple[float, float] = (7.16, 5.0),
+    figsize: tuple[float, float] = (7.16, 2.3),
     filename: str = "vec_time.pdf",
 ):
     fig = Figure(figsize=figsize)
     input_data = get_data(ts_files, configs, fops, bops, oops)
     draw(fig, input_data, paper_mode)
-    fig.savefig(filename, dpi=300)
+    fig.savefig(filename, dpi=300, bbox_inches="tight")
 
 
 if __name__ == "__main__":

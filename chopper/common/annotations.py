@@ -66,7 +66,8 @@ def assign_chunks(df: DataFrame) -> DataFrame:
     Returns:
         DataFrame with added 'chunk' column containing 'fwd', 'bwd', or 'opt'
     """
-    opt_mask = df['operator-name'].str.startswith('opt_', na=False)
+    opt_mask = (df['operator-name'].str.startswith('opt_', na=False) |
+                df['operator-name'].str.startswith('Optimizer.', na=False))
     bwd_mask = df['operator-name'].str.startswith('b_', na=False) & ~opt_mask
     fwd_mask = ~opt_mask & ~bwd_mask & ~df['operator-name'].isna()
 
