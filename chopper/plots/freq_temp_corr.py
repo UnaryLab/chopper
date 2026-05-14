@@ -232,20 +232,6 @@ def draw(
 
         axs[n_rows - 1].tick_params(axis="x", pad=1)
 
-    # Add border around figure in paper mode
-    if paper_mode.enabled:
-        fig.patches.append(
-            mpatches.Rectangle(
-                (0, 0),
-                1,
-                1,
-                transform=fig.transFigure,
-                fill=False,
-                edgecolor="black",
-                linewidth=1,
-                zorder=1000,
-            )
-        )
 
 
 def main(

@@ -15,7 +15,7 @@ from matplotlib.ticker import MaxNLocator
 from chopper.common.colors import rgb
 from chopper.common.cache import load_pickle
 from chopper.common.annotations import (
-    PaperMode,
+    PaperMode, apply_paper_rcparams, paper_figsize,
     no_overlap_mask, assign_chunks, assign_operator_type, fix_names,
 )
 from chopper.common.rocm_metrics import (
@@ -251,6 +251,10 @@ def draw(
             ) / max_dur
 
             act_flops = op_data["Tensor Flops"].median()
+            assert op_thr_flops <= act_flops, (
+                f"{op} in {s}: theoretical flops ({op_thr_flops:.2e}) > "
+                f"actual flops ({act_flops:.2e})"
+            )
             op_slot["inst"] = act_flops / op_thr_flops
 
             tensor_util = op_data["Tensor Util"].median()
@@ -415,14 +419,6 @@ def draw(
         legend_kwargs["bbox_to_anchor"] = paper_mode.legend_bbox
     fig.legend(**legend_kwargs)
 
-    if paper_mode.enabled:
-        fig.patches.append(
-            mpatches.Rectangle(
-                (0, 0), 1, 1,
-                transform=fig.transFigure,
-                fill=False, edgecolor="black", linewidth=1, zorder=1000,
-            )
-        )
 
 
 def main(
@@ -430,10 +426,23 @@ def main(
     configs: list[str] = ["default"],
     target_gpu: int = 0,
     sanity_check: bool = False,
-    paper_mode: PaperMode = PaperMode(),
+    ncol: int = 1,
+    figsize_ratio: float = 1.0,
+    left: float = 0.1, right: float = 0.9,
+    bottom: float = 0.1, top: float = 0.9,
+    wspace: float = 0.2, hspace: float = 0.3,
+    legend_x: float = 0.5, legend_y: float = 1.0,
     filename: str = "overhead_breakdown.png",
 ):
-    fig = Figure()
+    paper_mode = PaperMode(
+        enabled=True, ncol=ncol, figsize_ratio=figsize_ratio,
+        left=left, right=right, bottom=bottom, top=top,
+        wspace=wspace, hspace=hspace,
+        legend_bbox=(legend_x, legend_y),
+    )
+    apply_paper_rcparams()
+    figsize = paper_figsize(paper_mode)
+    fig = Figure(figsize=figsize)
     input_data = get_data(counter_files, configs, target_gpu)
     draw(fig, input_data, sanity_check=sanity_check, paper_mode=paper_mode)
     fig.savefig(filename, dpi=300)

@@ -79,7 +79,10 @@ def derive_call_overhead(df: DataFrame) -> DataFrame:
     lo = np.maximum(0, df['ts'] - prev_end_time)
     df['Call Overhead'] = np.minimum(tklqt, lo).astype(float) * 1e-6
 
-    df.loc[df.groupby(grp).head(1).index, 'Call Overhead'] = 0
+    first_idx = df.groupby(grp).head(1).index
+    df.loc[first_idx, 'Call Overhead'] = (
+        (df.loc[first_idx, 'ts'] - df.loc[first_idx, 'ts_cuda_runtime']).astype(float) * 1e-6
+    )
 
     return df
 

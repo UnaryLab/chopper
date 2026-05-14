@@ -29,6 +29,35 @@ class PaperMode:
     legend_bbox: tuple[float, float] | None = None
 
 
+def apply_paper_rcparams():
+    """Set matplotlib rcParams for publication-quality figures."""
+    from matplotlib import rcParams
+    rcParams['font.family'] = 'Gill Sans MT'
+    rcParams['font.size'] = 8
+    rcParams['axes.labelsize'] = 8
+    rcParams['axes.titlesize'] = 8
+    rcParams['xtick.labelsize'] = 8
+    rcParams['ytick.labelsize'] = 8
+    rcParams['legend.fontsize'] = 8
+    rcParams['figure.titlesize'] = 8
+    rcParams['hatch.color'] = 'black'
+    rcParams['hatch.linewidth'] = 0.5
+    rcParams['mathtext.default'] = 'regular'
+    rcParams['mathtext.fontset'] = 'cm'
+
+
+def paper_figsize(paper_mode: PaperMode) -> tuple[float, float]:
+    """Compute figure size in inches from PaperMode settings.
+
+    Uses the LaTeX column width (243.91125pt) scaled by ncol,
+    converted to inches, with height derived from figsize_ratio.
+    """
+    width_pt = 243.91125 * paper_mode.ncol
+    width_in = width_pt / 72.27
+    height_in = width_in * paper_mode.figsize_ratio
+    return (width_in, height_in)
+
+
 def no_overlap_mask(df: DataFrame) -> Series:
     """Create a boolean mask for non-overlapping computation kernels.
 

@@ -153,6 +153,28 @@ int main(int argc, char *argv[])
         ((float *)alphaVec1)[i] = static_cast<float>((rand() % 7) - 3);
     }
 
+    srand(11234);
+    for (int i = 0; i < m * k * batch_count; i++)
+        ((hipblasLtHalf *)a0)[i] = static_cast<hipblasLtHalf>((rand() % 10) / 10.0f);
+    for (int i = 0; i < n * k * batch_count; i++)
+        ((hipblasLtHalf *)b0)[i] = static_cast<hipblasLtHalf>((rand() % 10) / 10.0f);
+    for (int i = 0; i < m * n * batch_count; i++)
+        ((hipblasLtHalf *)c0)[i] = static_cast<hipblasLtHalf>((rand() % 10) / 10.0f);
+    for (int i = 0; i < m * batch_count; ++i)
+        ((float *)alphaVec0)[i] = static_cast<float>((rand() % 10) / 10.0f);
+
+    memcpy(a1, a0, m * k * batch_count * sizeof(hipblasLtHalf));
+    memcpy(b1, b0, n * k * batch_count * sizeof(hipblasLtHalf));
+    memcpy(c1, c0, m * n * batch_count * sizeof(hipblasLtHalf));
+    memcpy(alphaVec1, alphaVec0, m * batch_count * sizeof(float));
+
+    CHECK_HIP_ERROR(hipMemcpy(d_a0, a0, m * k * batch_count * sizeof(hipblasLtHalf), hipMemcpyHostToDevice));
+    CHECK_HIP_ERROR(hipMemcpy(d_a1, a1, m * k * batch_count * sizeof(hipblasLtHalf), hipMemcpyHostToDevice));
+    CHECK_HIP_ERROR(hipMemcpy(d_b0, b0, n * k * batch_count * sizeof(hipblasLtHalf), hipMemcpyHostToDevice));
+    CHECK_HIP_ERROR(hipMemcpy(d_b1, b1, n * k * batch_count * sizeof(hipblasLtHalf), hipMemcpyHostToDevice));
+    CHECK_HIP_ERROR(hipMemcpy(d_c0, c0, m * n * batch_count * sizeof(hipblasLtHalf), hipMemcpyHostToDevice));
+    CHECK_HIP_ERROR(hipMemcpy(d_c1, c1, m * n * batch_count * sizeof(hipblasLtHalf), hipMemcpyHostToDevice));
+
     hipblasLtMatrixLayout_t matA, matB, matC, matD;
     CHECK_HIPBLASLT_ERROR(
         hipblasLtMatrixLayoutCreate(&matA, HIP_R_16F, m, k, m));

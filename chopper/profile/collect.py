@@ -1,6 +1,5 @@
 from argparse import ArgumentParser
 from loguru import logger
-from chopper.profile.telemetry import cpu, gpu, counters, device_counters
 from chopper.profile.runner import Runner
 
 
@@ -22,6 +21,7 @@ def main(program,
     runner = Runner()
 
     if cpu_telemetry:
+        from chopper.profile.telemetry import cpu
         runner.add(
             cpu.main,
             False,
@@ -30,6 +30,7 @@ def main(program,
             off=telemetry_off,
         )
     if gpu_telemetry:
+        from chopper.profile.telemetry import gpu
         runner.add(
             gpu.main,
             False,
@@ -40,6 +41,7 @@ def main(program,
         )
 
     if device:
+        from chopper.profile.telemetry import device_counters
         runner.add(
             device_counters.main,
             True,
@@ -51,6 +53,7 @@ def main(program,
             sample_ms,
         )
     else:
+        from chopper.profile.telemetry import counters
         # rocprofv3 dispatch counters expect a flat list
         flat_counters = None
         if counter_names is not None:

@@ -12,7 +12,7 @@ from matplotlib.figure import Figure
 
 from chopper.common.colors import rgb
 from chopper.common.load import get_overlap_df
-from chopper.common.annotations import PaperMode
+from chopper.common.annotations import PaperMode, apply_paper_rcparams, paper_figsize
 
 
 def get_data(
@@ -187,7 +187,7 @@ def draw(
         Line2D([0], [0], color="black", linewidth=1, linestyle="--", label="overlap ratio"),
         Line2D([0], [0], color="black", linewidth=1, linestyle="-", label="duration"),
     ]
-    fig.legend(
+    legend_kwargs_1 = dict(
         handles=legend_handles,
         loc="upper left",
         ncol=len(params),
@@ -197,7 +197,10 @@ def draw(
         handlelength=0.5,
         frameon=False,
     )
-    fig.legend(
+    if paper_mode.legend_bbox is not None:
+        legend_kwargs_1["bbox_to_anchor"] = paper_mode.legend_bbox
+    fig.legend(**legend_kwargs_1)
+    legend_kwargs_2 = dict(
         handles=line_handles,
         loc="upper right",
         ncol=2,
@@ -207,15 +210,10 @@ def draw(
         handlelength=1.0,
         frameon=False,
     )
+    if paper_mode.legend_bbox is not None:
+        legend_kwargs_2["bbox_to_anchor"] = paper_mode.legend_bbox
+    fig.legend(**legend_kwargs_2)
 
-    if paper_mode.enabled:
-        fig.patches.append(
-            mpatches.Rectangle(
-                (0, 0), 1, 1,
-                transform=fig.transFigure,
-                fill=False, edgecolor="black", linewidth=1, zorder=1000,
-            )
-        )
 
 
 def main(
@@ -226,10 +224,23 @@ def main(
     iter_stop: int = -2,
     iter_step: int = 1,
     n_cols: int = 4,
-    paper_mode: PaperMode = PaperMode(),
+    ncol: int = 1,
+    figsize_ratio: float = 2.5 / 7.16,
+    left: float = 0.1, right: float = 0.9,
+    bottom: float = 0.1, top: float = 0.9,
+    wspace: float = 0.2, hspace: float = 0.3,
+    legend_x: float = 0.5, legend_y: float = 1.0,
     figsize: tuple[float, float] = (7.16, 2.5),
     filename: str = "overlap_gpus.pdf",
 ):
+    paper_mode = PaperMode(
+        enabled=True, ncol=ncol, figsize_ratio=figsize_ratio,
+        left=left, right=right, bottom=bottom, top=top,
+        wspace=wspace, hspace=hspace,
+        legend_bbox=(legend_x, legend_y),
+    )
+    apply_paper_rcparams()
+    figsize = paper_figsize(paper_mode)
     fig = Figure(figsize=figsize)
     iter_idxs = range(iter_start, iter_stop, iter_step)
     input_data = get_data(ts_files, configs, operator, iter_idxs)

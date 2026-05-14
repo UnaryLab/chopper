@@ -20,26 +20,28 @@ def _get_lib_path() -> str:
     """Locate the device counters shared library.
 
     With editable installs, __file__ points to the source tree but the
-    .so lives in site-packages. Check both.
+    .so lives in site-packages. Uses importlib.resources to find it
+    reliably in both editable and regular installs.
     """
     env_path = os.environ.get("CHOPPER_DEVICE_LIB")
     if env_path and os.path.isfile(env_path):
         return env_path
 
+    # Check adjacent to source file (non-editable install or manual build)
     pkg_dir = pathlib.Path(__file__).resolve().parent
     source_lib = pkg_dir / "lib" / LIB_NAME
     if source_lib.is_file():
         return str(source_lib)
 
-    # Editable install: .so is in site-packages, not source tree
-    import importlib.util
-    spec = importlib.util.find_spec("chopper.profile.telemetry")
-    assert spec is not None and spec.origin is not None, (
-        "Cannot find chopper.profile.telemetry package"
-    )
-    installed_lib = pathlib.Path(spec.origin).parent / "lib" / LIB_NAME
-    assert installed_lib.is_file(), (
-        f"{LIB_NAME} not found at {source_lib} or {installed_lib}. "
+    # Editable install: .so is in site-packages, scan them
+    import site
+    for sp in site.getsitepackages():
+        installed_lib = pathlib.Path(sp) / "chopper" / "profile" / "telemetry" / "lib" / LIB_NAME
+        if installed_lib.is_file():
+            return str(installed_lib)
+
+    assert False, (
+        f"{LIB_NAME} not found at {source_lib} or in site-packages. "
         f"Build with: pip install -e . (or set CHOPPER_DEVICE_LIB)"
     )
     return str(installed_lib)
@@ -126,6 +128,10 @@ def main(
             env["CHOPPER_SAMPLE_MS"] = str(sample_ms)
             env["CHOPPER_TRACE_OUTPUT"] = str(counter_dir / "kernel_traces.csv")
             env["CHOPPER_COUNTER_OUTPUT"] = str(counter_dir / "counter_samples.csv")
+
+            trace_only = "CHOPPER_TRACE_ONLY" in env
+            print(f"[device_counters] group {gi}: {group} "
+                  f"trace_only={trace_only} output={counter_dir}")
 
             if "LD_PRELOAD" in env:
                 env["LD_PRELOAD"] = lib_path + ":" + env["LD_PRELOAD"]

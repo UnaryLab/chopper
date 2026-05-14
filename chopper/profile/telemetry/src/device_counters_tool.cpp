@@ -24,6 +24,7 @@
 //   CHOPPER_SAMPLE_MS      - sampling interval in ms (default: 1)
 //   CHOPPER_COUNTER_OUTPUT - counter CSV path (default: counter_samples.csv)
 //   CHOPPER_TRACE_OUTPUT   - trace CSV path (default: kernel_traces.csv)
+//   CHOPPER_TRACE_ONLY     - if set, collect dispatch traces only (no device counters)
 
 #include <rocprofiler-sdk/registration.h>
 #include <rocprofiler-sdk/rocprofiler.h>
@@ -141,6 +142,7 @@ std::atomic<bool>        g_exit{false};
 std::atomic<bool>        g_thread_started{false};
 std::atomic<bool>        g_first_dispatch{false}; // set by buffer callback on first kernel
 int                      g_sample_interval_ms = 1;
+bool                     g_trace_only = false;    // skip device counting, keep dispatch traces
 
 std::unordered_map<uint64_t, rocprofiler_counter_config_id_t> g_profile_cache;
 
@@ -369,7 +371,10 @@ int tool_init(rocprofiler_client_finalize_t, void*)
     if(auto* env = std::getenv("CHOPPER_SAMPLE_MS"); env)
         g_sample_interval_ms = std::atoi(env);
 
-    std::clog << "[tool] Initializing with sample interval " << g_sample_interval_ms << " ms\n";
+    g_trace_only = (std::getenv("CHOPPER_TRACE_ONLY") != nullptr);
+
+    std::clog << "[tool] Initializing with sample interval " << g_sample_interval_ms << " ms"
+              << (g_trace_only ? " (trace-only mode, no device counters)" : "") << "\n";
 
     // --- Context 1: dispatch tracing (safe to start immediately) ---
     ROCPROFILER_CALL(rocprofiler_create_context(&g_ctx), "tracing context creation");
@@ -406,102 +411,116 @@ int tool_init(rocprofiler_client_finalize_t, void*)
 
     ROCPROFILER_CALL(rocprofiler_start_context(g_ctx), "start tracing context");
 
-    // --- Context 2: device counting (deferred start) ---
-    // Starting the device counting context configures PMC hardware on the GPU.
-    // If done during HSA or NCCL initialization, this causes a GPU hang.
-    // We defer this until the first kernel dispatch is observed, which
-    // guarantees that GPU init is complete.
-    ROCPROFILER_CALL(rocprofiler_create_context(&g_counter_ctx), "counter context creation");
-
-    ROCPROFILER_CALL(rocprofiler_create_buffer(g_counter_ctx,
-                                               4096,
-                                               2048,
-                                               ROCPROFILER_BUFFER_POLICY_LOSSLESS,
-                                               tool_buffer_callback,
-                                               nullptr,
-                                               &g_counter_buffer),
-                     "counter buffer creation");
-
-    // Discover GPU agents and select the one matching LOCAL_RANK
-    std::vector<rocprofiler_agent_v0_t>     agents;
-    rocprofiler_query_available_agents_cb_t iterate_cb = [](rocprofiler_agent_version_t agents_ver,
-                                                            const void**                agents_arr,
-                                                            size_t                      num_agents,
-                                                            void*                       udata)
-    {
-        if(agents_ver != ROCPROFILER_AGENT_INFO_VERSION_0)
-            throw std::runtime_error{"unexpected rocprofiler agent version"};
-        auto* agents_v = static_cast<std::vector<rocprofiler_agent_v0_t>*>(udata);
-        for(size_t i = 0; i < num_agents; ++i)
-            agents_v->emplace_back(*static_cast<const rocprofiler_agent_v0_t*>(agents_arr[i]));
-        return ROCPROFILER_STATUS_SUCCESS;
-    };
-
-    ROCPROFILER_CALL(
-        rocprofiler_query_available_agents(ROCPROFILER_AGENT_INFO_VERSION_0,
-                                           iterate_cb,
-                                           sizeof(rocprofiler_agent_t),
-                                           const_cast<void*>(static_cast<const void*>(&agents))),
-        "query available agents");
-
-    int target_gpu_index = 0;
-    if(auto* lr = std::getenv("LOCAL_RANK"); lr)
-        target_gpu_index = std::atoi(lr);
-
-    rocprofiler_agent_id_t target_agent = {.handle = 0};
-    int gpu_index = 0;
-    for(const auto& agent : agents)
-    {
-        if(agent.type == ROCPROFILER_AGENT_TYPE_GPU)
-        {
-            if(gpu_index == target_gpu_index)
-            {
-                g_profile_cache.emplace(agent.id.handle, build_profile_for_agent(agent.id));
-                target_agent = agent.id;
-                std::clog << "[tool] rank " << target_gpu_index
-                          << " using GPU agent: " << agent.id.handle << "\n";
-                break;
-            }
-            gpu_index++;
-        }
-    }
-
-    if(target_agent.handle == 0)
-    {
-        std::cerr << "[tool] No GPU agents found\n";
-        return 1;
-    }
-
-    ROCPROFILER_CALL(rocprofiler_configure_device_counting_service(g_counter_ctx,
-                                                                   g_counter_buffer,
-                                                                   target_agent,
-                                                                   set_profile,
-                                                                   nullptr),
-                     "Could not setup device counting service");
-
     auto client_thread = rocprofiler_callback_thread_t{};
     ROCPROFILER_CALL(rocprofiler_create_callback_thread(&client_thread),
                      "failure creating callback thread");
     ROCPROFILER_CALL(rocprofiler_assign_callback_thread(g_trace_buffer, client_thread),
                      "failed to assign thread for trace buffer");
-    ROCPROFILER_CALL(rocprofiler_assign_callback_thread(g_counter_buffer, client_thread),
-                     "failed to assign thread for counter buffer");
 
-    // --- Sampling thread ---
-    // Waits for g_first_dispatch (set by buffer callback when the first kernel
-    // dispatch record arrives), then starts the counter context and begins
-    // polling. For non-GPU processes, g_first_dispatch never fires and the
-    // thread exits cleanly when g_exit is set.
+    if(!g_trace_only)
+    {
+        // --- Context 2: device counting (deferred start) ---
+        // Starting the device counting context configures PMC hardware on the GPU.
+        // If done during HSA or NCCL initialization, this causes a GPU hang.
+        // We defer this until the first kernel dispatch is observed, which
+        // guarantees that GPU init is complete.
+        ROCPROFILER_CALL(rocprofiler_create_context(&g_counter_ctx), "counter context creation");
+
+        ROCPROFILER_CALL(rocprofiler_create_buffer(g_counter_ctx,
+                                                   4096,
+                                                   2048,
+                                                   ROCPROFILER_BUFFER_POLICY_LOSSLESS,
+                                                   tool_buffer_callback,
+                                                   nullptr,
+                                                   &g_counter_buffer),
+                         "counter buffer creation");
+
+        // Discover GPU agents and select the one matching LOCAL_RANK
+        std::vector<rocprofiler_agent_v0_t>     agents;
+        rocprofiler_query_available_agents_cb_t iterate_cb =
+            [](rocprofiler_agent_version_t agents_ver,
+               const void**                agents_arr,
+               size_t                      num_agents,
+               void*                       udata)
+        {
+            if(agents_ver != ROCPROFILER_AGENT_INFO_VERSION_0)
+                throw std::runtime_error{"unexpected rocprofiler agent version"};
+            auto* agents_v = static_cast<std::vector<rocprofiler_agent_v0_t>*>(udata);
+            for(size_t i = 0; i < num_agents; ++i)
+                agents_v->emplace_back(
+                    *static_cast<const rocprofiler_agent_v0_t*>(agents_arr[i]));
+            return ROCPROFILER_STATUS_SUCCESS;
+        };
+
+        ROCPROFILER_CALL(rocprofiler_query_available_agents(
+                             ROCPROFILER_AGENT_INFO_VERSION_0,
+                             iterate_cb,
+                             sizeof(rocprofiler_agent_t),
+                             const_cast<void*>(static_cast<const void*>(&agents))),
+                         "query available agents");
+
+        int target_gpu_index = 0;
+        if(auto* lr = std::getenv("LOCAL_RANK"); lr)
+            target_gpu_index = std::atoi(lr);
+
+        rocprofiler_agent_id_t target_agent = {.handle = 0};
+        int gpu_index = 0;
+        for(const auto& agent : agents)
+        {
+            if(agent.type == ROCPROFILER_AGENT_TYPE_GPU)
+            {
+                if(gpu_index == target_gpu_index)
+                {
+                    g_profile_cache.emplace(agent.id.handle,
+                                            build_profile_for_agent(agent.id));
+                    target_agent = agent.id;
+                    std::clog << "[tool] rank " << target_gpu_index
+                              << " using GPU agent: " << agent.id.handle << "\n";
+                    break;
+                }
+                gpu_index++;
+            }
+        }
+
+        if(target_agent.handle == 0)
+        {
+            std::cerr << "[tool] No GPU agents found\n";
+            return 1;
+        }
+
+        ROCPROFILER_CALL(rocprofiler_configure_device_counting_service(g_counter_ctx,
+                                                                       g_counter_buffer,
+                                                                       target_agent,
+                                                                       set_profile,
+                                                                       nullptr),
+                         "Could not setup device counting service");
+
+        ROCPROFILER_CALL(rocprofiler_assign_callback_thread(g_counter_buffer, client_thread),
+                         "failed to assign thread for counter buffer");
+    }
+
+    // --- Sampling / flush thread ---
+    // In full mode: waits for first dispatch, starts counter context, samples.
+    // In trace-only mode: just keeps flushing the trace buffer so records
+    // are delivered promptly.
     g_thread_started.store(true);
     std::thread(
         [=]()
         {
+            if(g_trace_only)
+            {
+                while(!g_exit.load())
+                {
+                    rocprofiler_flush_buffer(g_trace_buffer);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+                g_exit.store(false);
+                return;
+            }
+
             std::clog << "[tool] Waiting for first kernel dispatch...\n";
             while(!g_exit.load() && !g_first_dispatch.load())
             {
-                // Force-flush the trace buffer so the first dispatch record
-                // is delivered to the callback immediately, rather than
-                // waiting for the buffer watermark to be reached.
                 rocprofiler_flush_buffer(g_trace_buffer);
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
@@ -557,9 +576,13 @@ void tool_fini(void*)
     {};
 
     rocprofiler_stop_context(g_ctx);
-    rocprofiler_stop_context(g_counter_ctx);
     ROCPROFILER_CALL(rocprofiler_flush_buffer(g_trace_buffer), "trace buffer flush");
-    ROCPROFILER_CALL(rocprofiler_flush_buffer(g_counter_buffer), "counter buffer flush");
+
+    if(!g_trace_only)
+    {
+        rocprofiler_stop_context(g_counter_ctx);
+        ROCPROFILER_CALL(rocprofiler_flush_buffer(g_counter_buffer), "counter buffer flush");
+    }
 
     // Determine rank suffix for multi-process runs (torchrun sets LOCAL_RANK)
     std::string rank_suffix;
@@ -599,7 +622,8 @@ void tool_fini(void*)
                   << " kernel records to " << path << "\n";
     }
 
-    // Write counter samples CSV
+    // Write counter samples CSV (skip in trace-only mode)
+    if(!g_trace_only)
     {
         std::string path = "counter_samples" + rank_suffix + ".csv";
         if(auto* env = std::getenv("CHOPPER_COUNTER_OUTPUT"); env)

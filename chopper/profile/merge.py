@@ -222,6 +222,29 @@ def parse_trace(filename):
     labeled = promote(cpu_ops, labeled)
     fwdbwd_layers = promote(cpu_ops, fwdbwd_layers)
 
+    # HACK
+    # some autograd ops don't have sequence numbers (e.g., bwd all gathers)
+    # they are spawned by other operations (e.g., residual add launches bwd all gathers)
+    # Need to use timestamp based promotion of sibling fwdbwd labels to parents, instead of seq number
+    # Then, parent propogate layers to all gather in the bwd pass
+    autograd_eids = [
+        eid for eid, op in cpu_ops.items()
+        if eid not in fwdbwd_layers
+        and op['name'].startswith('autograd::engine::evaluate_function:')
+        and op.get('seq') is None
+    ]
+    if autograd_eids:
+        labeled_ts = [cpu_ops[eid]['ts'] for eid in fwdbwd_layers]
+        labeled_layers = list(fwdbwd_layers.values())
+        autograd_ranges = [(cpu_ops[eid]['ts'], cpu_ops[eid]['ts'] + cpu_ops[eid]['dur'], eid)
+                           for eid in autograd_eids]
+        autograd_ranges.sort(key=lambda r: r[1] - r[0], reverse=True)
+        parent_eids = assign_ranges(labeled_ts, autograd_ranges)
+        for i, parent_eid in enumerate(parent_eids):
+            if parent_eid is not None and parent_eid not in fwdbwd_layers:
+                fwdbwd_layers[parent_eid] = labeled_layers[i]
+    # end of HACK
+
     # Step 3: propagate labels and layers to children
     labeled = propagate(cpu_ops, labeled)
     fwdbwd_layers = propagate(cpu_ops, fwdbwd_layers)

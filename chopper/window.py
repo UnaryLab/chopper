@@ -386,7 +386,7 @@ class MatplotlibWidget(QWidget):
                 # Apply paper-specific rcParams
                 import matplotlib.pyplot as plt
 
-                plt.rcParams['font.family'] = 'Gill Sans'
+                plt.rcParams['font.family'] = 'Gill Sans MT'
                 plt.rcParams['font.size'] = 8
                 plt.rcParams['axes.labelsize'] = 8
                 plt.rcParams['axes.titlesize'] = 8

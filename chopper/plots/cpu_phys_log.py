@@ -166,14 +166,6 @@ def draw(
         legend_kwargs["bbox_to_anchor"] = paper_mode.legend_bbox
     fig.legend(**legend_kwargs)
 
-    if paper_mode.enabled:
-        fig.patches.append(
-            mpatches.Rectangle(
-                (0, 0), 1, 1,
-                transform=fig.transFigure,
-                fill=False, edgecolor="black", linewidth=1, zorder=1000,
-            )
-        )
 
 
 def main(

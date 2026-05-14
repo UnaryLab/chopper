@@ -6,7 +6,7 @@ import matplotlib.patches as mpatches
 from chopper.common.colors import rgb
 from chopper.common.cache import load_pickle
 from loguru import logger
-from chopper.common.annotations import PaperMode
+from chopper.common.annotations import PaperMode, apply_paper_rcparams, paper_figsize
 from matplotlib.ticker import MaxNLocator
 from matplotlib.figure import Figure
 
@@ -252,16 +252,6 @@ def draw(
     for ci in range(n_cols):
         axs[n_rows - 1][ci].tick_params(axis="x", pad=1)
 
-    # Add border around figure in paper mode (removed when saving)
-    if paper_mode.enabled:
-        fig.patches.append(mpatches.Rectangle(
-            (0, 0), 1, 1,
-            transform=fig.transFigure,
-            fill=False,
-            edgecolor="black",
-            linewidth=1,
-            zorder=1000,
-        ))
 
 def main(
     gpu_files: list[str] = ["./gpu.pkl"],
@@ -272,12 +262,26 @@ def main(
     ymaxs: list[float] = [float('inf')],
     ymins: list[float] = [float('-inf')],
     per_variant_norm: bool = False,
+    ncol: int = 1,
+    figsize_ratio: float = 2.5 / 7.16,
+    left: float = 0.1, right: float = 0.9,
+    bottom: float = 0.1, top: float = 0.9,
+    wspace: float = 0.2, hspace: float = 0.3,
+    legend_x: float = 0.5, legend_y: float = 1.0,
     figsize: tuple[float, float] = (7.16, 2.5),
     filename: str = "average_power_frequency.pdf",
 ):
+    paper_mode = PaperMode(
+        enabled=True, ncol=ncol, figsize_ratio=figsize_ratio,
+        left=left, right=right, bottom=bottom, top=top,
+        wspace=wspace, hspace=hspace,
+        legend_bbox=(legend_x, legend_y),
+    )
+    apply_paper_rcparams()
+    figsize = paper_figsize(paper_mode)
     fig = Figure(figsize=figsize)
     input_data = get_data(gpu_files, configs)
-    draw(fig, input_data, metrics, starts, stops, ymaxs, ymins, per_variant_norm, PaperMode())
+    draw(fig, input_data, metrics, starts, stops, ymaxs, ymins, per_variant_norm, paper_mode)
     fig.savefig(filename, dpi=300)
 
 if __name__ == "__main__":

@@ -13,28 +13,8 @@ from matplotlib.ticker import MaxNLocator
 from chopper.common.colors import rgb
 from chopper.common.cache import load_pickle
 from chopper.common.annotations import (
-    PaperMode, no_overlap_mask, assign_chunks,
+    PaperMode, apply_paper_rcparams, paper_figsize, no_overlap_mask, assign_chunks,
 )
-from chopper.common.rocm_metrics import derive_duration
-
-
-def _agg(df, group_arr, derive_cols=None):
-    df_summed = df.groupby(group_arr, dropna=False).agg(
-        {
-            "dur": ["sum", "count"],
-            "ts": ["first", "last"],
-        }
-    ).reset_index()
-    df_summed.columns = [
-        "_".join(col).strip("_") if col[1] != "sum" else col[0]
-        for col in df_summed.columns
-    ]
-    if derive_cols is not None:
-        for dc in derive_cols:
-            dc(df_summed)
-    return df_summed
-
-
 def get_data(
     ts_files: list[str] = ["./ts.pkl"],
     configs: list[str] = ["default"],
@@ -59,32 +39,20 @@ def get_data(
     max_dur = 0
     for setup in configs:
         df = data[setup]
-        df["layer"] = df["layer"].fillna(-1)
-        weird_mask = df["iteration"].isna()
-        if weird_mask.any():
-            assert df[~weird_mask]["ts"].min() > df[weird_mask]["ts"].max(), (
-                "Nan iteration isn't at the start"
-            )
-            df = df[~weird_mask]
-        df = df[~df["name"].isin((
-            "Memcpy HtoD (Host -> Device)",
-            "MEMORY_COPY_HOST_TO_DEVICE",
-        ))]
+        df = df[df["iteration"].notna() & df["layer"].notna()].copy()
+        last_iter = df["iteration"].max()
+        df = df[df["iteration"] != last_iter]
+
         df = assign_chunks(df)
         overlap_mask = no_overlap_mask(df)
+        nccl_mask = df["name"].str.startswith("ncclDevKernel", na=False)
 
-        allgather_mask = (
-            df["operator-name"].str.contains("all_gather", na=False)
-            & ~df["operator-name"].str.startswith("b_", na=False)
-        )
-        reduce_scatter_mask = (
+        allgather_mask = nccl_mask & df["operator-name"].str.contains("all_gather", na=False)
+        reduce_scatter_mask = nccl_mask & (
             df["operator-name"].str.contains("post_backward_reduce", na=False)
             | df["operator-name"].str.startswith("b_FSDP::pre_forward", na=False)
         )
-
-        other_mask = (
-            ~overlap_mask & ~df["name"].str.startswith("ncclDevKernel", na=False)
-        )
+        other_mask = ~overlap_mask & ~allgather_mask & ~reduce_scatter_mask
 
         overlaps = {
             "ag": allgather_mask,
@@ -92,12 +60,12 @@ def get_data(
             "other": other_mask,
         }
         for ov, ov_mask in overlaps.items():
-            overlap_data[setup][ov] = _agg(
-                df[ov_mask],
-                ["gpu", "iteration"],
-                derive_cols=(derive_duration,),
-            )
-            max_dur = max(max_dur, np.max(overlap_data[setup][ov]["Duration"]))
+            ov_df = df[ov_mask].groupby(
+                ["gpu", "iteration", "layer", "operator-name"], dropna=False
+            ).agg(dur=("dur", "sum")).reset_index()
+            ov_df["Duration"] = ov_df["dur"].astype(float) * 1e-6
+            overlap_data[setup][ov] = ov_df
+            max_dur = max(max_dur, ov_df["Duration"].max())
 
     for setup in configs:
         for ov in overlaps_keys:
@@ -134,6 +102,8 @@ def draw(
             bottom=paper_mode.bottom, top=paper_mode.top,
             wspace=paper_mode.wspace, hspace=paper_mode.hspace,
         )
+    else:
+        fig.subplots_adjust(left=0.06, right=0.98, bottom=0.2, top=0.9)
 
     axs = tuple(
         tuple(fig.add_subplot(n_rows, n_cols, r * n_cols + c + 1) for c in range(n_cols))
@@ -194,23 +164,28 @@ def draw(
 
     axs[0][n_cols // 2].set_xlabel("norm dur", labelpad=0)
 
-    if paper_mode.enabled:
-        fig.patches.append(
-            mpatches.Rectangle(
-                (0, 0), 1, 1,
-                transform=fig.transFigure,
-                fill=False, edgecolor="black", linewidth=1, zorder=1000,
-            )
-        )
 
 
 def main(
     ts_files: list[str] = ["./ts.pkl"],
     configs: list[str] = ["default"],
-    paper_mode: PaperMode = PaperMode(),
-    figsize: tuple[float, float] = (7.16, 2.5),
+    ncol: int = 1,
+    figsize_ratio: float = 1.8 / 7.16,
+    left: float = 0.06, right: float = 0.98,
+    bottom: float = 0.2, top: float = 0.9,
+    wspace: float = 0.2, hspace: float = 0.3,
+    legend_x: float = 0.5, legend_y: float = 1.0,
+    figsize: tuple[float, float] = (7.16, 1.8),
     filename: str = "comm_violin.pdf",
 ):
+    paper_mode = PaperMode(
+        enabled=True, ncol=ncol, figsize_ratio=figsize_ratio,
+        left=left, right=right, bottom=bottom, top=top,
+        wspace=wspace, hspace=hspace,
+        legend_bbox=(legend_x, legend_y),
+    )
+    apply_paper_rcparams()
+    figsize = paper_figsize(paper_mode)
     fig = Figure(figsize=figsize)
     input_data = get_data(ts_files, configs)
     draw(fig, input_data, paper_mode)

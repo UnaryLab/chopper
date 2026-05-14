@@ -12,7 +12,7 @@ from matplotlib.ticker import MaxNLocator
 
 from chopper.common.colors import okabe_ito
 from chopper.common.load import get_df
-from chopper.common.annotations import PaperMode
+from chopper.common.annotations import PaperMode, apply_paper_rcparams, paper_figsize
 
 
 def get_data(
@@ -146,7 +146,7 @@ def draw(
 
     # ── Left panel: throughput ──
     x = np.arange(len(params))
-    bar_width = 0.75
+    bar_width = 0.85
     colors = list(okabe_ito.values())
 
     ax_tput.set_title("throughput", pad=2, fontsize=8)
@@ -160,6 +160,8 @@ def draw(
     ax_tput.set_ylabel(f"norm to {norm_setup} (%)", labelpad=1)
     ax_tput.set_xticks(x)
     ax_tput.set_xticklabels(params)
+    ax_tput.tick_params(axis="x", which="major", pad=1)
+    ax_tput.tick_params(axis="y", which="major", pad=1)
     ax_tput.grid(axis="y", linestyle="--", alpha=0.5)
     ax_tput.spines["top"].set_visible(False)
     ax_tput.spines["right"].set_visible(False)
@@ -177,7 +179,7 @@ def draw(
     ]
 
     ax_tpt.set_title("time per token", pad=2, fontsize=8)
-    total_width = 0.75
+    total_width = 0.85
     bottom = np.zeros(len(params))
 
     for label, fwd_key, bwd_key, color in split_categories:
@@ -222,8 +224,9 @@ def draw(
     ax_tpt.set_ylabel(f"norm to {tpt_norm_setup} (%)", labelpad=1)
     ax_tpt.set_xticks(x)
     ax_tpt.set_xticklabels(params)
+    ax_tpt.tick_params(axis="x", which="major", pad=1)
+    ax_tpt.tick_params(axis="y", which="major", pad=1)
     ax_tpt.grid(axis="y", linestyle="--", alpha=0.3)
-    ax_tpt.axhline(y=100, color="gray", linestyle=":", alpha=0.5)
     ax_tpt.spines["top"].set_visible(False)
     ax_tpt.spines["left"].set_visible(False)
     ax_tpt.yaxis.set_label_position("right")
@@ -243,7 +246,7 @@ def draw(
     legend_kwargs = dict(
         handles=handles,
         loc="upper center",
-        ncol=len(handles),
+        ncol=(len(handles) + 1) // 2,
         frameon=False,
         fontsize=7,
         handlelength=0.8,
@@ -254,28 +257,33 @@ def draw(
         legend_kwargs["bbox_to_anchor"] = paper_mode.legend_bbox
     fig.legend(**legend_kwargs)
 
-    if paper_mode.enabled:
-        fig.patches.append(
-            mpatches.Rectangle(
-                (0, 0), 1, 1,
-                transform=fig.transFigure,
-                fill=False, edgecolor="black", linewidth=1, zorder=1000,
-            )
-        )
 
 
 def main(
     ts_files: list[str] = ["./ts.pkl"],
     configs: list[str] = ["b1s4"],
     norm_setup: str | None = None,
-    paper_mode: PaperMode = PaperMode(legend_bbox=(0.5, 1.02)),
+    ncol: int = 1,
+    figsize_ratio: float = 2.5 / 7.16,
+    left: float = 0.1, right: float = 0.9,
+    bottom: float = 0.1, top: float = 0.9,
+    wspace: float = 0.2, hspace: float = 0.3,
+    legend_x: float = 0.5, legend_y: float = 1.02,
     figsize: tuple[float, float] = (7.16, 2.5),
     filename: str = "end_to_end.pdf",
 ):
+    paper_mode = PaperMode(
+        enabled=True, ncol=ncol, figsize_ratio=figsize_ratio,
+        left=left, right=right, bottom=bottom, top=top,
+        wspace=wspace, hspace=hspace,
+        legend_bbox=(legend_x, legend_y),
+    )
+    apply_paper_rcparams()
+    figsize = paper_figsize(paper_mode)
     fig = Figure(figsize=figsize)
     input_data = get_data(ts_files, configs)
     draw(fig, input_data, norm_setup, paper_mode)
-    fig.savefig(filename, dpi=300, bbox_inches="tight")
+    fig.savefig(filename, dpi=300)
 
 
 if __name__ == "__main__":

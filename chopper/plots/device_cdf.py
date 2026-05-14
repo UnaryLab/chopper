@@ -13,6 +13,11 @@ import numpy as np
 from loguru import logger
 from matplotlib.figure import Figure
 
+from chopper.common.annotations import (
+    PaperMode,
+    apply_paper_rcparams,
+    paper_figsize,
+)
 from chopper.common.rocm_metrics import derive_tensor_util_rocm
 
 
@@ -66,7 +71,18 @@ def get_data(
 def draw(
     fig: Figure,
     input_data,
+    paper_mode: PaperMode = PaperMode(),
 ):
+    fig.clear()
+    fig.patches.clear()
+
+    if paper_mode.enabled:
+        fig.subplots_adjust(
+            left=paper_mode.left, right=paper_mode.right,
+            bottom=paper_mode.bottom, top=paper_mode.top,
+            wspace=paper_mode.wspace, hspace=paper_mode.hspace,
+        )
+
     gemm_only = input_data["gemm_only"]
     gemm_nccl = input_data["gemm_nccl"]
 
@@ -82,36 +98,50 @@ def draw(
         cdf = np.arange(1, len(sorted_data) + 1) / len(sorted_data)
         ax.plot(sorted_data, cdf, linewidth=2, color=color, label=label)
 
-    ax.set_xlabel("Instantaneous MFMA Utilization (%)", fontsize=12)
-    ax.set_ylabel("CDF", fontsize=12)
+    ax.set_xlabel("Instantaneous MFMA Utilization (%)")
+    ax.set_ylabel("CDF")
     ax.set_xlim(0, 100)
     ax.set_ylim(0, 1)
-    ax.legend(fontsize=11)
+    ax.legend()
     ax.grid(True, alpha=0.3)
 
     if len(gemm_only):
         med = np.median(gemm_only)
         ax.axvline(med, color="steelblue", linestyle="--", alpha=0.5)
-        ax.text(med + 1, 0.45, f"median={med:.1f}%", color="steelblue", fontsize=10)
+        ax.text(med + 1, 0.45, f"median={med:.1f}%", color="steelblue")
     if len(gemm_nccl):
         med = np.median(gemm_nccl)
         ax.axvline(med, color="red", linestyle="--", alpha=0.5)
-        ax.text(med + 1, 0.55, f"median={med:.1f}%", color="red", fontsize=10)
+        ax.text(med + 1, 0.55, f"median={med:.1f}%", color="red")
 
-    fig.suptitle("MFMA Utilization CDF: GEMM-only vs Overlapped with NCCL",
-                 fontsize=13)
+    fig.suptitle("MFMA Utilization CDF: GEMM-only vs Overlapped with NCCL")
+
 
 
 def main(
     device_files: list[str] = ["./device_merged.pkl"],
     target_gpu: int = 0,
+    ncol: int = 1,
+    figsize_ratio: float = 6 / 10,
+    left: float = 0.1, right: float = 0.9,
+    bottom: float = 0.1, top: float = 0.9,
+    wspace: float = 0.2, hspace: float = 0.3,
+    legend_x: float = 0.5, legend_y: float = 1.0,
     figsize: tuple[float, float] = (10, 6),
     filename: str = "device_cdf.png",
 ):
+    paper_mode = PaperMode(
+        enabled=True, ncol=ncol, figsize_ratio=figsize_ratio,
+        left=left, right=right, bottom=bottom, top=top,
+        wspace=wspace, hspace=hspace,
+        legend_bbox=(legend_x, legend_y),
+    )
+    apply_paper_rcparams()
+    figsize = paper_figsize(paper_mode)
     fig = Figure(figsize=figsize)
     input_data = get_data(device_files, target_gpu)
-    draw(fig, input_data)
-    fig.savefig(filename, dpi=150)
+    draw(fig, input_data, paper_mode)
+    fig.savefig(filename, dpi=300)
     logger.info(f"Saved {filename}")
 
     gemm_only = input_data["gemm_only"]

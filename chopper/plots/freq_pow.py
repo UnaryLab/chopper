@@ -292,17 +292,6 @@ def draw(
     # Center xlabel across all columns
     fig.text(0.5, 0.01, "sample", ha="center", va="bottom")
 
-    # Add border around figure in paper mode (removed when saving)
-    if paper_mode.enabled:
-        fig.patches.append(mpatches.Rectangle(
-            (0, 0), 1, 1,
-            transform=fig.transFigure,
-            fill=False,
-            edgecolor="black",
-            linewidth=1,
-            zorder=1000,
-        ))
-
     legend_handles = [
         mpatches.Patch(color=color_dict[metric], label=legend_names[metric])
         for metric in metrics

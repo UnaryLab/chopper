@@ -10,6 +10,9 @@ from matplotlib import rcParams
 from chopper.common.colors import rgb
 from chopper.common.cache import load_pickle
 from chopper.common.annotations import (
+    PaperMode,
+    apply_paper_rcparams,
+    paper_figsize,
     no_overlap_mask,
     assign_chunks,
     fix_names,
@@ -166,8 +169,9 @@ def get_data(
             start_ts = iter_start.loc[(row["gpu"], row["iteration"])]
             gap = max(0, row["ts"] - start_ts) * 1e-6
             if "Prep Overhead" in df.columns:
-                df.loc[idx, "Prep Overhead"] = gap
-                df.loc[idx, "Call Overhead"] = 0
+                call = df.loc[idx, "Call Overhead"]
+                df.loc[idx, "Prep Overhead"] = gap - call
+                # Call Overhead already set by derive_call_overhead
             else:
                 df.loc[idx, "Launch Overhead"] = gap
 
@@ -202,6 +206,7 @@ def draw(
         "b_ie",
     ],
     two_axes: bool = True,
+    paper_mode: PaperMode = PaperMode(),
 ):
     """Draw launch overhead comparison across configurations.
 
@@ -263,6 +268,15 @@ def draw(
 
     x = np.arange(len(params))
     fig.clear()
+    fig.patches.clear()
+
+    if paper_mode.enabled:
+        fig.subplots_adjust(
+            left=paper_mode.left, right=paper_mode.right,
+            bottom=paper_mode.bottom, top=paper_mode.top,
+            wspace=paper_mode.wspace, hspace=paper_mode.hspace,
+        )
+
     width_ratios = (
         (
             tuple(1 for _ in range(len(lops)))
@@ -404,8 +418,9 @@ def draw(
             )
         )
 
-    fig.legend(
+    legend_kwargs = dict(
         handles=legend_handles,
+        loc="upper center",
         ncol=len(legend_handles),
         borderpad=0.17,
         handletextpad=0.4,
@@ -413,6 +428,10 @@ def draw(
         handlelength=0.5,
         frameon=False,
     )
+    if paper_mode.legend_bbox is not None:
+        legend_kwargs["bbox_to_anchor"] = paper_mode.legend_bbox
+    fig.legend(**legend_kwargs)
+
 
 
 def main(
@@ -421,12 +440,26 @@ def main(
     lops: list[str] = ["f_ie", "b_ga", "opt_step"],
     rops: list[str] = ["f_attn_n", "b_mlp_dp", "b_ie"],
     two_axes: bool = True,
+    ncol: int = 1,
+    figsize_ratio: float = 2.0 / 7.16,
+    left: float = 0.1, right: float = 0.9,
+    bottom: float = 0.28, top: float = 0.82,
+    wspace: float = 0.2, hspace: float = 0.3,
+    legend_x: float = 0.5, legend_y: float = 1.0,
     figsize: tuple[float, float] = (7.16, 2.0),
     filename: str = "launch_overhead.pdf",
 ):
+    paper_mode = PaperMode(
+        enabled=True, ncol=ncol, figsize_ratio=figsize_ratio,
+        left=left, right=right, bottom=bottom, top=top,
+        wspace=wspace, hspace=hspace,
+        legend_bbox=(legend_x, legend_y),
+    )
+    apply_paper_rcparams()
+    figsize = paper_figsize(paper_mode)
     fig = Figure(figsize=figsize)
     input_data = get_data(ts_files, configs)
-    draw(fig, input_data, lops, rops, two_axes)
+    draw(fig, input_data, lops, rops, two_axes, paper_mode)
     fig.savefig(filename, dpi=300)
 
 
